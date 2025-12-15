@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="light_black">#FF333333</color>
+
+    <color name="colorPrimary">#3F51B5</color>
+    <color name="colorPrimaryDark">#303F9F</color>
+    <color name="colorAccent">#FF4081</color>
+    
+    <!-- 品牌主色 -->
+    <color name="brand_primary">#1976D2</color>
+    <color name="brand_primary_dark">#0D47A1</color>
+    <color name="brand_accent">#42A5F5</color>
+    
+    <!-- 背景色 -->
+    <color name="background_light">#F5F7FA</color>
+    <color name="card_background">#FFFFFF</color>
+
+    <!-- 状态颜色 -->
+    <color name="status_normal">#4CAF50</color>   <!-- 绿色：正常 -->
+    <color name="status_warning">#FF9800</color>  <!-- 橙色：单挂/警告 -->
+    <color name="status_danger">#F44336</color>   <!-- 红色：异常 -->
+    <color name="status_offline">#9E9E9E</color>  <!-- 灰色：离线 -->
+    <color name="status_gold">#FFD700</color> <!-- 金色：全部移除 -->
+    
+    <!-- 文本颜色 -->
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="text_tertiary">#BDBDBD</color>
+
+    <!-- 登录界面美化 -->
+    <color name="login_background_start">#E3F2FD</color>
+    <color name="login_background_end">#FFFFFF</color>
+    <color name="input_border_focused">@color/brand_primary</color>
+    <color name="placeholder_text">#999999</color>
+    <color name="error_text">#e74c3c</color>
+
+    <!-- 兼容旧代码引用 -->
+    <color name="lightblue">#22D1DD</color>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#1976D2</color> 
+    <color name="purple_700">#0D47A1</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="login_background">#FFF0F5</color>
+    <color name="login_button_color">#179BE2</color>
+    <color name="edit_text_border_color">#D3D3D3</color>
+    <color name="darkblue">#00008B</color>
+
+</resources>

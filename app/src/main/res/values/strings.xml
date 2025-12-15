@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">安全带佩戴监测</string>
+    <string name="expand_button_description">显示或隐藏传感器详情</string>
+    <string name="startscanbutton">开始扫描</string>
+    <string name="stopscanbutton">停止扫描</string>
+    <string name="add_device">Add device</string>
+    <string name="remove_device">Remove device</string>
+</resources>

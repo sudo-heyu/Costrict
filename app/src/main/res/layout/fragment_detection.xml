@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- “安全带检测”页面的布局文件 -->
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    tools:context=".fragment.DetectionFragment">
+
+    <!--
+     上半部分：已选设备状态总览区域。
+     使用一个带边框的 ConstraintLayout 作为容器。
+    -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/status_container"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="16dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/status_box_border"
+        android:padding="1dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <!-- 用于左右分割“后背绳”和“围杆带”区域的垂直辅助线 -->
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline_vertical_internal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            app:layout_constraintGuide_percent="0.5" />
+
+        <!-- 用于上下分割状态区域和“胸腰扣”区域的水平辅助线 -->
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/guideline_horizontal_internal"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_begin="180dp" />
+
+        <!-- “后背绳”区域 -->
+        <TextView
+            android:id="@+id/hbs_status_box_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="8dp"
+            android:text="后背绳"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle1"
+            android:textStyle="bold"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/hbs_recycler_view"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="8dp"
+            app:layout_constraintBottom_toTopOf="@id/guideline_horizontal_internal"
+            app:layout_constraintEnd_toStartOf="@id/guideline_vertical_internal"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/hbs_status_box_title"
+            tools:itemCount="3"
+            tools:listitem="@layout/list_item_status" />
+
+        <!-- “围杆带”区域 -->
+        <TextView
+            android:id="@+id/wgd_status_box_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginTop="8dp"
+            android:text="围杆带"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle1"
+            android:textStyle="bold"
+            app:layout_constraintStart_toEndOf="@id/guideline_vertical_internal"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/wgd_recycler_view"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="8dp"
+            app:layout_constraintBottom_toTopOf="@id/guideline_horizontal_internal"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@id/guideline_vertical_internal"
+            app:layout_constraintTop_toBottomOf="@id/wgd_status_box_title"
+            tools:itemCount="2"
+            tools:listitem="@layout/list_item_status" />
+
+        <!-- 垂直分割线 -->
+        <View
+            android:id="@+id/vertical_divider"
+            android:layout_width="1dp"
+            android:layout_height="0dp"
+            android:background="@android:color/darker_gray"
+            app:layout_constraintBottom_toTopOf="@id/guideline_horizontal_internal"
+            app:layout_constraintEnd_toStartOf="@id/guideline_vertical_internal"
+            app:layout_constraintStart_toEndOf="@id/guideline_vertical_internal"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <!-- 水平分割线 -->
+        <View
+            android:id="@+id/horizontal_divider"
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:background="@android:color/darker_gray"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/guideline_horizontal_internal" />
+
+        <!-- “胸腰扣”区域 (单行显示) -->
+        <TextView
+            android:id="@+id/xyk_status_box_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="胸腰扣:"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle1"
+            android:textStyle="bold"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/horizontal_divider" />
+
+        <TextView
+            android:id="@+id/xyk_device_name"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="8dp"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:text="未连接"
+            android:textAppearance="@style/TextAppearance.MaterialComponents.Body1"
+            app:layout_constraintBottom_toBottomOf="@id/xyk_status_box_title"
+            app:layout_constraintEnd_toStartOf="@id/xyk_remove_button"
+            app:layout_constraintStart_toEndOf="@id/xyk_status_box_title"
+            app:layout_constraintTop_toTopOf="@id/xyk_status_box_title" />
+
+        <ImageButton
+            android:id="@+id/xyk_remove_button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="移除胸腰扣"
+            android:src="@drawable/ic_remove_circle"
+            app:tint="@android:color/holo_red_dark"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="@id/xyk_status_box_title"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/xyk_status_box_title"
+            tools:visibility="visible" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+
+    <!-- 下半部分：可连接设备列表 -->
+    <TextView
+        android:id="@+id/scan_list_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:layout_marginTop="16dp"
+        android:text="可连接设备"
+        android:textAppearance="@style/TextAppearance.MaterialComponents.Headline6"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/status_container" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/devices_recycler_view"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_margin="8dp"
+        app:layout_constraintBottom_toTopOf="@id/scan_button"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/scan_list_title"
+        tools:listitem="@layout/list_item_scan" />
+
+    <!-- 扫描/确定按钮 -->
+    <Button
+        android:id="@+id/scan_button"
+        android:layout_width="0dp"
+        android:layout_height="55dp"
+        android:layout_marginStart="90dp"
+        android:layout_marginEnd="90dp"
+        android:layout_marginBottom="8dp"
+        android:backgroundTint="@color/lightblue"
+        android:maxLines="1"
+        android:text="@string/startscanbutton"
+        android:textSize="17sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
