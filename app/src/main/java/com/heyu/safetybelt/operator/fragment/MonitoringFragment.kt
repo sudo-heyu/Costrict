@@ -153,8 +153,6 @@ class MonitoringFragment : Fragment() {
         setupButtons()
         binding.backButton.setOnClickListener { parentFragmentManager.popBackStack() }
 
-        val scrollAmount = (200 * resources.displayMetrics.density).toInt()
-
         val filter = IntentFilter().apply {
             addAction(BleService.ACTION_STATUS_UPDATE)
             addAction(BleService.ACTION_HEARTBEAT_UPDATE)
@@ -167,10 +165,14 @@ class MonitoringFragment : Fragment() {
         super.onDestroyView()
         LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(serviceReceiver)
         countdownHandler.removeCallbacksAndMessages(null)
-        val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
-            action = BleService.ACTION_DISCONNECT_ALL
-        }
-        requireContext().startService(serviceIntent)
+        
+        // The following lines are commented out to persist the session and connection
+        // endWorkSession()
+        // val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
+        //     action = BleService.ACTION_DISCONNECT_ALL
+        // }
+        // requireContext().startService(serviceIntent)
+
         compositeDisposable.clear()
         _binding = null
     }
@@ -234,14 +236,8 @@ class MonitoringFragment : Fragment() {
         val rowView = inflater.inflate(R.layout.list_item_monitoring, binding.scrollableDataContainer, false)
         val btName1 = rowView.findViewById<TextView>(R.id.item_sensor_bt_name_1)
         val status1 = rowView.findViewById<TextView>(R.id.item_sensor_status_1)
-//        val btName2 = rowView.findViewById<TextView>(R.id.item_sensor_bt_name_2)
-//        val status2 = rowView.findViewById<TextView>(R.id.item_sensor_status_2)
-
-//        btName2.visibility = View.GONE
-//        status2.visibility = View.GONE
 
         val slot1VH = SensorSlotViewHolder(btName1, status1)
-//        val slot2VH = SensorSlotViewHolder(btName2, status2)
 
         val device1 = devices?.getOrNull(0)
         if (device1 != null) {
@@ -253,17 +249,6 @@ class MonitoringFragment : Fragment() {
             slot1VH.statusView.text = "未配置"
             slot1VH.statusView.setTextColor(Color.LTGRAY)
         }
-
-//        val device2 = devices?.getOrNull(1)
-//        if (device2 != null) {
-////            slot2VH.btNameView.text = device2.bestName
-////            slot2VH.statusView.text = "待连接"
-////            slot2VH.statusView.setTextColor(Color.GRAY)
-//        } else {
-//            slot2VH.btNameView.text = "---"
-//            slot2VH.statusView.text = "未配置"
-//            slot2VH.statusView.setTextColor(Color.LTGRAY)
-//        }
 
         binding.scrollableDataContainer.addView(rowView)
         viewHolders[sensorType] = DeviceViewHolder(nameView, slot1VH)
@@ -362,13 +347,44 @@ class MonitoringFragment : Fragment() {
         })
     }
 
+    private fun endWorkSession() {
+        if (currentSessionId == null) {
+            Log.w(TAG, "endWorkSession called but currentSessionId is null.")
+            return
+        }
+
+        val session = LCObject.createWithoutData("WorkSession", currentSessionId!!)
+        session.put("endTime", Date())
+        session.put("isOnline", false)
+        session.put("totalAlarmCount", currentSessionAlarmCount)
+
+        session.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
+            override fun onSubscribe(d: io.reactivex.disposables.Disposable) { compositeDisposable.add(d) }
+            override fun onNext(t: LCObject) {
+                Log.d(TAG, "Successfully ended work session: ${t.objectId}")
+            }
+            override fun onError(e: Throwable) {
+                Log.e(TAG, "Failed to end work session: $currentSessionId", e)
+            }
+            override fun onComplete() {
+                currentSessionId = null
+                currentSessionAlarmCount = 0
+            }
+        })
+    }
+
     private fun showDisconnectConfirmationDialog() {
         AlertDialog.Builder(requireContext())
             .setTitle("断开连接")
             .setMessage("您确定要断开所有设备的连接吗？")
             .setPositiveButton("确定") { _, _ ->
+                // End cloud session first
+                endWorkSession()
+
+                // Then disconnect BLE devices
                 val serviceIntent = Intent(requireContext(), BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
                 requireContext().startService(serviceIntent)
+
                 WorkRecordManager.stopCurrentWork(requireContext(), currentSessionAlarmCount)
                 alarmingDevices.clear()
                 handleDisconnectUI()

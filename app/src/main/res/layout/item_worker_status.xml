@@ -18,7 +18,7 @@
         android:layout_height="wrap_content"
         android:padding="16dp">
 
-        <!-- 左侧图标/头像区域：已替换为 worker.png -->
+        <!-- 左侧图标/头像区域 -->
         <ImageView
             android:id="@+id/avatar_icon"
             android:layout_width="48dp"
@@ -32,15 +32,77 @@
             app:srcCompat="@drawable/worker"
             app:tint="#555555" />
 
+        <!-- 右侧动作和状态区域 -->
+        <LinearLayout
+            android:id="@+id/status_action_layout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!-- 报警按钮 -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/button_send_alert"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="发送远程报警"
+                app:icon="@android:drawable/stat_notify_error"
+                app:iconSize="24dp"
+                app:iconTint="@color/status_danger" />
+
+            <!-- 状态区域 -->
+            <LinearLayout
+                android:id="@+id/status_layout"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="end"
+                android:orientation="vertical">
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/status_chip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="false"
+                    android:minHeight="32dp"
+                    android:textColor="@color/white"
+                    app:chipBackgroundColor="@color/status_normal"
+                    app:chipCornerRadius="16dp"
+                    app:chipMinHeight="32dp"
+                    app:ensureMinTouchTargetSize="false"
+                    app:textEndPadding="8dp"
+                    app:textStartPadding="8dp"
+                    tools:text="正常" />
+
+                <TextView
+                    android:id="@+id/last_updated_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:drawablePadding="4dp"
+                    android:gravity="center_vertical"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="12sp"
+                    app:drawableStartCompat="@android:drawable/ic_menu_recent_history"
+                    app:drawableTint="@color/text_tertiary"
+                    tools:text="00:15:30" />
+            </LinearLayout>
+
+        </LinearLayout>
+
         <!-- 中间信息区域 -->
         <LinearLayout
+            android:id="@+id/info_layout"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_marginStart="16dp"
             android:layout_marginEnd="8dp"
             android:orientation="vertical"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toStartOf="@+id/status_layout"
+            app:layout_constraintEnd_toStartOf="@+id/status_action_layout"
             app:layout_constraintStart_toEndOf="@+id/avatar_icon"
             app:layout_constraintTop_toTopOf="parent">
 
@@ -58,70 +120,23 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="工号: 12345"
                 android:textColor="@color/text_secondary"
                 android:textSize="14sp"
                 tools:text="工号: 12345" />
         </LinearLayout>
 
-        <!-- 右侧状态区域 -->
-        <LinearLayout
-            android:id="@+id/status_layout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:gravity="end"
-            android:orientation="vertical"
-            app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="parent">
-
-            <com.google.android.material.chip.Chip
-                android:id="@+id/status_chip"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:clickable="false"
-                android:minHeight="32dp"
-                android:text="在线-正常"
-                android:textColor="@color/white"
-                app:chipBackgroundColor="@color/status_normal"
-                app:chipCornerRadius="16dp"
-                app:chipMinHeight="32dp"
-                app:ensureMinTouchTargetSize="false"
-                app:textStartPadding="8dp"
-                app:textEndPadding="8dp"
-                tools:text="正常" />
-
-            <TextView
-                android:id="@+id/last_updated_text"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:drawablePadding="4dp"
-                android:gravity="center_vertical"
-                android:textColor="@color/text_tertiary"
-                android:textSize="12sp"
-                app:drawableStartCompat="@android:drawable/ic_menu_recent_history"
-                app:drawableTint="@color/text_tertiary"
-                tools:text="00:15:30" />
-
-        </LinearLayout>
-        
         <!-- 兼容性保留 -->
         <View
             android:id="@+id/status_indicator"
             android:layout_width="1dp"
             android:layout_height="1dp"
-            android:visibility="gone"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"/>
-            
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/status_text"
             android:layout_width="1dp"
             android:layout_height="1dp"
-            android:visibility="gone"
-            app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toTopOf="parent"/>
+            android:visibility="gone" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

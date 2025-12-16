@@ -7,14 +7,16 @@ import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import cn.leancloud.LCObject
-import com.google.android.material.button.MaterialButton
+import cn.leancloud.LCQuery
 import com.google.android.material.chip.Chip
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.heyu.safetybelt.R
@@ -40,10 +42,10 @@ class WorkerStatusAdapter(
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val workerName: TextView = view.findViewById(R.id.worker_name_text)
         val workerNumber: TextView = view.findViewById(R.id.worker_number_text)
-        // 使用 Chip 来显示状态，替代原来的 View + TextView 组合
         val statusChip: Chip = view.findViewById(R.id.status_chip)
         val lastUpdated: TextView = view.findViewById(R.id.last_updated_text)
         val avatarIcon: ImageView = view.findViewById(R.id.avatar_icon)
+        val sendAlertButton: Button = view.findViewById(R.id.button_send_alert)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -64,7 +66,6 @@ class WorkerStatusAdapter(
         // 根据状态设置 Chip 的颜色和文字
         holder.statusChip.text = workerStatus.status
         
-        // 获取颜色资源
         val colorNormal = ContextCompat.getColor(context, R.color.status_normal)
         val colorWarning = ContextCompat.getColor(context, R.color.status_warning)
         val colorDanger = ContextCompat.getColor(context, R.color.status_danger)
@@ -95,7 +96,6 @@ class WorkerStatusAdapter(
             }
         }
         
-        // 确保文字颜色为白色
         holder.statusChip.setTextColor(colorWhite)
 
         // 计时器逻辑
@@ -108,12 +108,10 @@ class WorkerStatusAdapter(
                 override fun run() {
                     val elapsedMillis = System.currentTimeMillis() - startTime
                     val millis = if (elapsedMillis < 0) 0 else elapsedMillis
-                    
                     val hours = millis / (1000 * 60 * 60)
                     val minutes = (millis / (1000 * 60)) % 60
                     val seconds = (millis / 1000) % 60
                     holder.lastUpdated.text = String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
-                    
                     handler.postDelayed(this, 1000)
                 }
             }
@@ -123,79 +121,74 @@ class WorkerStatusAdapter(
             holder.lastUpdated.text = "--:--:--"
         }
 
+        // Set OnClickListener for the whole item
         holder.itemView.setOnClickListener {
-            onItemClick?.invoke(workerStatus) ?: showSensorDetailsDialog(holder, workerStatus)
+            onItemClick?.invoke(workerStatus) ?: showWorkerDetailDialog(holder, workerStatus)
+        }
+
+        // Set OnClickListener for the alert button
+        holder.sendAlertButton.isEnabled = workerStatus.isOnline
+        holder.sendAlertButton.setOnClickListener {
+            sendAdminAlert(workerStatus, holder.sendAlertButton)
         }
     }
 
-    private fun showSensorDetailsDialog(holder: ViewHolder, workerStatus: WorkerStatus) {
+    private fun sendAdminAlert(workerStatus: WorkerStatus, button: Button) {
+        val context = button.context
+        if (workerStatus.sessionId != null) {
+            val session = LCObject.createWithoutData("WorkSession", workerStatus.sessionId)
+            session.put("adminAlert", true)
+            
+            button.isEnabled = false
+            
+            session.saveInBackground().subscribe(object : Observer<LCObject> {
+                override fun onSubscribe(d: Disposable) {}
+                override fun onNext(t: LCObject) {
+                    handler.post {
+                        Toast.makeText(context, "报警指令已发送", Toast.LENGTH_SHORT).show()
+                        handler.postDelayed({ button.isEnabled = workerStatus.isOnline }, 2000)
+                    }
+                }
+                override fun onError(e: Throwable) {
+                    handler.post {
+                        Toast.makeText(context, "发送失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        button.isEnabled = workerStatus.isOnline
+                    }
+                }
+                override fun onComplete() {}
+            })
+        } else {
+            Toast.makeText(context, "无法获取会话ID，请刷新后重试", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showWorkerDetailDialog(holder: ViewHolder, workerStatus: WorkerStatus) {
         val context = holder.itemView.context
-        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_sensor_details, null)
+        val dialogView = LayoutInflater.from(context).inflate(R.layout.dialog_worker_detail_scrollable, null)
 
-        val sensor1 = dialogView.findViewById<TextView>(R.id.dialog_sensor_1)
-        val sensor2 = dialogView.findViewById<TextView>(R.id.dialog_sensor_2)
-        val sensor3 = dialogView.findViewById<TextView>(R.id.dialog_sensor_3)
-        val sensor4 = dialogView.findViewById<TextView>(R.id.dialog_sensor_4)
-        val sensor5 = dialogView.findViewById<TextView>(R.id.dialog_sensor_5)
-        val sensor6 = dialogView.findViewById<TextView>(R.id.dialog_sensor_6)
+        // --- Sensor Status Setup ---
+        val sensorViews = listOf<TextView>(
+            dialogView.findViewById(R.id.dialog_sensor_1),
+            dialogView.findViewById(R.id.dialog_sensor_2),
+            dialogView.findViewById(R.id.dialog_sensor_3),
+            dialogView.findViewById(R.id.dialog_sensor_4),
+            dialogView.findViewById(R.id.dialog_sensor_5),
+            dialogView.findViewById(R.id.dialog_sensor_6)
+        )
+        updateSensorViews(sensorViews, workerStatus)
 
-        // 恢复：发送报警按钮逻辑
-        val btnSendAlert = dialogView.findViewById<MaterialButton>(R.id.btn_send_alert)
-        
-        // 根据在线状态决定按钮是否可用
-        btnSendAlert.isEnabled = workerStatus.isOnline
-        if (!workerStatus.isOnline) {
-            btnSendAlert.alpha = 0.5f
-            btnSendAlert.text = "设备离线"
-        }
+        // --- Work History Setup ---
+        val workHistoryRecyclerView = dialogView.findViewById<RecyclerView>(R.id.work_history_recycler_view)
+        val emptyHistoryView = dialogView.findViewById<TextView>(R.id.empty_history_view)
+        workHistoryRecyclerView.layoutManager = LinearLayoutManager(context)
+        val historyAdapter = WorkHistoryAdapter(emptyList())
+        workHistoryRecyclerView.adapter = historyAdapter
 
-        btnSendAlert.setOnClickListener {
-            if (workerStatus.sessionId != null) {
-                // 创建一个只包含 objectId 的 WorkSession 对象来更新
-                val session = LCObject.createWithoutData("WorkSession", workerStatus.sessionId)
-                session.put("adminAlert", true)
-                
-                // 禁用按钮防止重复点击
-                btnSendAlert.isEnabled = false
-                btnSendAlert.text = "发送中..."
-                
-                session.saveInBackground().subscribe(object : Observer<LCObject> {
-                    override fun onSubscribe(d: Disposable) {}
-                    override fun onNext(t: LCObject) {
-                        handler.post {
-                            Toast.makeText(context, "报警指令已发送", Toast.LENGTH_SHORT).show()
-                            btnSendAlert.text = "已发送"
-                            // 延迟两秒恢复，允许再次发送
-                            handler.postDelayed({ 
-                                if (activeDialog != null && activeDialog!!.isShowing) {
-                                    btnSendAlert.isEnabled = true
-                                    btnSendAlert.text = "发送远程报警"
-                                }
-                            }, 2000)
-                        }
-                    }
-                    override fun onError(e: Throwable) {
-                        handler.post {
-                            Toast.makeText(context, "发送失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                            btnSendAlert.isEnabled = true
-                            btnSendAlert.text = "发送远程报警"
-                        }
-                    }
-                    override fun onComplete() {}
-                })
-            } else {
-                Toast.makeText(context, "无法获取会话ID，请刷新后重试", Toast.LENGTH_SHORT).show()
-            }
-        }
+        fetchWorkHistory(workerStatus.workerId, historyAdapter, emptyHistoryView)
 
-        // 保存 TextView 列表以便后续更新
-        val views = listOf(sensor1, sensor2, sensor3, sensor4, sensor5, sensor6)
-        
-        // 初始设置状态
-        updateSensorViews(views, workerStatus)
-
+        // --- Dialog Creation ---
         val dialog = MaterialAlertDialogBuilder(context)
-            .setTitle(workerStatus.workerName) 
+            .setTitle(workerStatus.workerName)
             .setView(dialogView)
             .setPositiveButton("关闭", null)
             .create()
@@ -210,13 +203,42 @@ class WorkerStatusAdapter(
         
         dialog.show()
         
-        // 记录当前打开的对话框
+        // Track the active dialog for real-time updates
         activeDialog = dialog
         activeWorkerId = workerStatus.workerId
-        activeDialogViews = views
+        activeDialogViews = sensorViews
     }
 
-    // 提取更新逻辑为独立方法
+    private fun fetchWorkHistory(workerId: String, adapter: WorkHistoryAdapter, emptyView: View) {
+        val workerPointer = LCObject.createWithoutData("_User", workerId)
+        val query = LCQuery<LCObject>("WorkSession")
+        query.whereEqualTo("worker", workerPointer)
+        query.orderByDescending("startTime")
+        query.limit = 50 // Limit the number of history items
+        query.findInBackground().subscribe(object : Observer<List<LCObject>> {
+            override fun onSubscribe(d: Disposable) {}
+            override fun onNext(sessions: List<LCObject>) {
+                handler.post {
+                    if (sessions.isEmpty()) {
+                        emptyView.visibility = View.VISIBLE
+                        adapter.updateData(emptyList())
+                    } else {
+                        emptyView.visibility = View.GONE
+                        adapter.updateData(sessions)
+                    }
+                }
+            }
+            override fun onError(e: Throwable) {
+                handler.post {
+                    emptyView.visibility = View.VISIBLE
+                    emptyView.findViewById<TextView>(R.id.empty_history_view).text = "加载历史记录失败"
+                    Toast.makeText(emptyView.context, "历史记录加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onComplete() {}
+        })
+    }
+    
     private fun updateSensorViews(views: List<TextView>, status: WorkerStatus) {
         if (views.isEmpty()) return
         val context = views[0].context
@@ -234,17 +256,10 @@ class WorkerStatusAdapter(
             val finalStatus = s ?: defaultStatus
             textView.text = finalStatus
             
-            // 根据状态设置颜色
             when (finalStatus) {
-                "已扣好", "已挂好" -> {
-                    textView.setTextColor(ContextCompat.getColor(context, R.color.status_normal))
-                }
-                "未扣好", "未挂好", "未挂" -> {
-                    textView.setTextColor(ContextCompat.getColor(context, R.color.status_danger))
-                }
-                else -> {
-                     textView.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
-                }
+                "已扣好", "已挂好" -> textView.setTextColor(ContextCompat.getColor(context, R.color.status_normal))
+                "未扣好", "未挂好", "未挂" -> textView.setTextColor(ContextCompat.getColor(context, R.color.status_danger))
+                else -> textView.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
             }
         }
     }
@@ -257,33 +272,19 @@ class WorkerStatusAdapter(
 
     override fun getItemCount() = workerStatusList.size
 
-    fun addItem(workerStatus: WorkerStatus) {
-        val existingIndex = workerStatusList.indexOfFirst { it.workerId == workerStatus.workerId }
-        if (existingIndex != -1) {
-            workerStatusList[existingIndex] = workerStatus
-            notifyItemChanged(existingIndex)
-        } else {
-            workerStatusList.add(workerStatus)
-            notifyItemInserted(workerStatusList.size - 1)
-        }
-        
-        // 如果当前有打开的对话框，且对应这个工人的更新，则刷新对话框内容
-        if (activeDialog != null && activeWorkerId == workerStatus.workerId && activeDialogViews != null) {
-            updateSensorViews(activeDialogViews!!, workerStatus)
-        }
-    }
-
     fun setItems(newItems: List<WorkerStatus>) {
         cleanup()
         workerStatusList.clear()
         workerStatusList.addAll(newItems)
         notifyDataSetChanged()
         
-        // 如果当前有打开的对话框，在新的列表中查找该工人并刷新内容
         if (activeDialog != null && activeWorkerId != null && activeDialogViews != null) {
             val updatedWorker = workerStatusList.find { it.workerId == activeWorkerId }
             if (updatedWorker != null) {
                 updateSensorViews(activeDialogViews!!, updatedWorker)
+            } else {
+                // Worker is no longer in the list, close the dialog
+                activeDialog?.dismiss()
             }
         }
     }

@@ -13,8 +13,6 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.os.VibrationEffect
-import android.os.Vibrator
 import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
@@ -81,7 +79,6 @@ class DetectionFragment : Fragment() {
     private val scannedDevicesMap = ConcurrentHashMap<String, DeviceScanResult>()
     private val deviceLastSeen = ConcurrentHashMap<String, Long>()
     private val rx3CompositeDisposable = CompositeDisposable()
-    // Use RxJava2 CompositeDisposable for LeanCloud SDK compatibility
     private val rx2CompositeDisposable = io.reactivex.disposables.CompositeDisposable()
 
     private lateinit var sharedPreferences: SharedPreferences
@@ -105,25 +102,136 @@ class DetectionFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         sharedPreferences = requireActivity().getSharedPreferences("DeviceLists", Context.MODE_PRIVATE)
-        sharedPreferences.edit().clear().apply()
 
         setupUI()
         loadDeviceLists()
         updateAllStatusLists()
 
-        checkAndRequestPermissions()
+        checkAndRequestPermissions() // This will trigger the automatic scan
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
-        stopBleScan()
-        hbsDevices.clear()
-        wgdDevices.clear()
-        xykDevices.clear()
-        sharedPreferences.edit().clear().apply()
+        stopBleScan() // Only stop scanning, do not clear data
         rx3CompositeDisposable.clear()
         rx2CompositeDisposable.clear()
         _binding = null
+    }
+
+    private fun saveDeviceLists() {
+        with(sharedPreferences.edit()) {
+            putString("hbs_devices", gson.toJson(hbsDevices))
+            putString("wgd_devices", gson.toJson(wgdDevices))
+            putString("xyk_devices", gson.toJson(xykDevices))
+            apply()
+        }
+    }
+
+    private fun loadDeviceLists() {
+        val typeHbs = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
+        sharedPreferences.getString("hbs_devices", null)?.let { hbsDevices = gson.fromJson(it, typeHbs) }
+
+        val typeWgd = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
+        sharedPreferences.getString("wgd_devices", null)?.let { wgdDevices = gson.fromJson(it, typeWgd) }
+
+        val typeXyk = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
+        sharedPreferences.getString("xyk_devices", null)?.let { xykDevices = gson.fromJson(it, typeXyk) }
+    }
+
+    private fun addDeviceToCategory(device: DeviceScanResult) {
+        val deviceAddress = device.device.address
+        val alreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
+                wgdDevices.any { it.device.address == deviceAddress } ||
+                xykDevices.any { it.device.address == deviceAddress }
+
+        if (alreadySelected) {
+            activity?.runOnUiThread {
+                Toast.makeText(context, "设备 ${device.bestName} 已选择", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        val previousHbsCount = hbsDevices.size
+        val previousWgdCount = wgdDevices.size
+        val previousXykCount = xykDevices.size
+
+        when (getSensorTypeFromDeviceName(device.bestName)) {
+            1, 2, 6 -> hbsDevices.add(device)
+            3, 4 -> wgdDevices.add(device)
+            5 -> {
+                if (xykDevices.isEmpty()) {
+                    xykDevices.add(device)
+                } else {
+                    activity?.runOnUiThread {
+                        Toast.makeText(context, "胸腰扣设备只能选择一个", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            else -> activity?.runOnUiThread {
+                Toast.makeText(context, "未知设备类型: ${device.bestName}", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        val wasAdded = hbsDevices.size > previousHbsCount ||
+                wgdDevices.size > previousWgdCount ||
+                xykDevices.size > previousXykCount
+
+        if (wasAdded) {
+            scannedDevicesMap.remove(device.device.address)
+            // DO NOT remove from deviceLastSeen, as this timestamp is needed to prevent it from being immediately removed.
+            updateScanResultsUI()
+        }
+
+        updateAllStatusLists()
+        saveDeviceLists()
+    }
+
+    private fun handleRemoveFromHbs(device: DeviceScanResult) {
+        hbsDevices.remove(device)
+        updateAllStatusLists()
+        saveDeviceLists()
+    }
+
+    private fun handleRemoveFromWgd(device: DeviceScanResult) {
+        wgdDevices.remove(device)
+        updateAllStatusLists()
+        saveDeviceLists()
+    }
+
+    private fun handleRemoveFromXyk() {
+        if (xykDevices.isNotEmpty()) {
+            xykDevices.clear()
+            updateAllStatusLists()
+            saveDeviceLists()
+        }
+    }
+
+    private fun updateAllStatusLists() {
+        updateHbsList()
+        updateWgdList()
+        updateXykList()
+    }
+
+    private fun updateHbsList() {
+        hbsAdapter.updateList(hbsDevices.toList())
+        hbsTitleTextView.text = "后背绳设备 (${hbsDevices.size})"
+    }
+
+    private fun updateWgdList() {
+        wgdAdapter.updateList(wgdDevices.toList())
+        wgdTitleTextView.text = "围杆带设备 (${wgdDevices.size})"
+    }
+
+    private fun updateXykList() {
+        if (xykDevices.isNotEmpty()) {
+            xykDeviceNameTextView.text = xykDevices.first().bestName
+            xykDeviceNameTextView.visibility = View.VISIBLE
+            xykRemoveButton.visibility = View.VISIBLE
+        } else {
+            xykDeviceNameTextView.text = "未选择"
+            xykDeviceNameTextView.visibility = View.GONE
+            xykRemoveButton.visibility = View.GONE
+        }
     }
 
     private fun setupUI() {
@@ -145,7 +253,11 @@ class DetectionFragment : Fragment() {
         wgdTitleTextView = binding.wgdStatusBoxTitle
 
         xykRemoveButton.setOnClickListener { handleRemoveFromXyk() }
-        binding.scanButton.setOnClickListener { toggleScan() }
+
+        // --- Modified Button Logic ---
+        binding.scanButton.text = "确定"
+        binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.darkblue)
+        binding.scanButton.setOnClickListener { stopBleScan(navigateToMonitoring = true) }
     }
 
     private fun checkAndRequestPermissions() {
@@ -161,22 +273,7 @@ class DetectionFragment : Fragment() {
 
         if (missingPermissions.isNotEmpty()) {
             requestPermissionLauncher.launch(missingPermissions.toTypedArray())
-        }
-    }
-
-    private fun toggleScan() {
-        if (isScanning) {
-            stopBleScan(navigateToMonitoring = true)
         } else {
-            val vibrator = requireContext().getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-            if (vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(50, VibrationEffect.DEFAULT_AMPLITUDE))
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(50)
-                }
-            }
             checkAndPromptLocationServices()
         }
     }
@@ -233,11 +330,9 @@ class DetectionFragment : Fragment() {
                 .build()
 
             isScanning = true
-            binding.scanButton.text = "确定"
-            binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.darkblue)
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
 
-            val scanUpdateDisposable = Observable.interval(2, 2, TimeUnit.SECONDS)
+            val scanUpdateDisposable = Observable.interval(5, 5, TimeUnit.SECONDS)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe { updateScanResultsUI() }
             rx3CompositeDisposable.add(scanUpdateDisposable)
@@ -249,8 +344,6 @@ class DetectionFragment : Fragment() {
         if (isScanning) {
             bleScanner?.stopScan(bleScanCallback)
             isScanning = false
-            binding.scanButton.text = "开始扫描"
-            binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.lightblue)
             rx3CompositeDisposable.clear()
         }
 
@@ -284,15 +377,13 @@ class DetectionFragment : Fragment() {
             val device = Device()
             device.macAddress = scanResult.device.address
             device.bestName = scanResult.bestName
-            val sensorType = scanResult.bestName.split(" ").getOrNull(1)?.split("_")?.getOrNull(0)?.toIntOrNull()
-            device.sensorType = sensorType ?: 0
+            device.sensorType = getSensorTypeFromDeviceName(scanResult.bestName) ?: 0
             device
         }
 
         devicesToSave.forEach { device ->
             device.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
                 override fun onSubscribe(d: io.reactivex.disposables.Disposable) {
-                    // Correctly add the RxJava2 Disposable to the RxJava2 CompositeDisposable
                     rx2CompositeDisposable.add(d)
                 }
                 override fun onNext(t: LCObject) {
@@ -315,8 +406,6 @@ class DetectionFragment : Fragment() {
             result?.let { processScanResult(it) }
         }
 
-
-
         override fun onBatchScanResults(results: MutableList<ScanResult>?) {
             results?.forEach { processScanResult(it) }
         }
@@ -324,176 +413,80 @@ class DetectionFragment : Fragment() {
         override fun onScanFailed(errorCode: Int) {
             activity?.runOnUiThread {
                 Toast.makeText(requireContext(), "蓝牙扫描失败，错误码: $errorCode", Toast.LENGTH_LONG).show()
-                stopBleScan()
             }
         }
     }
 
-    @SuppressLint("MissingPermission")
-    @Synchronized
     private fun processScanResult(result: ScanResult) {
-        val scanRecord = result.scanRecord
-        val bestName = result.device.name ?: scanRecord?.deviceName
-        if (bestName.isNullOrBlank()) return
-
-        val regex = "^Sensor [1-6]_[0-9a-fA-F]{4}$".toRegex()
-        if (!bestName.matches(regex)) {
-            return
-        }
-
         val deviceAddress = result.device.address
-        if (isDeviceAlreadySelected(deviceAddress)) {
+        val deviceName = result.scanRecord?.deviceName
+        val rssi = result.rssi
+
+        Log.d("DetectionFragment", "Device Found: Name='${deviceName ?: "null"}', Address='$deviceAddress'")
+
+        if (deviceName.isNullOrEmpty() || !deviceName.contains("Sensor", ignoreCase = true)) {
             return
         }
 
+        // Always update the last seen timestamp for any relevant device that is found.
         deviceLastSeen[deviceAddress] = System.currentTimeMillis()
+
+        // Check if the device is already in one of the selected lists.
+        val isAlreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
+                                wgdDevices.any { it.device.address == deviceAddress } ||
+                                xykDevices.any { it.device.address == deviceAddress }
+
+        if (isAlreadySelected) {
+            // If it's selected, it should not be in the scan list. Remove if present and ignore.
+            if (scannedDevicesMap.containsKey(deviceAddress)) {
+                scannedDevicesMap.remove(deviceAddress)
+            }
+            return
+        }
 
         val existingDevice = scannedDevicesMap[deviceAddress]
         if (existingDevice != null) {
-            existingDevice.rssi = result.rssi
+            if (rssi > existingDevice.rssi) {
+                existingDevice.rssi = rssi
+            }
+            // deviceLastSeen is already updated above.
         } else {
-            scannedDevicesMap[deviceAddress] = DeviceScanResult(result.device, result.rssi, bestName)
+            scannedDevicesMap[deviceAddress] = DeviceScanResult(result.device, rssi, deviceName)
+            // deviceLastSeen is already updated above.
         }
-    }
-
-    private fun isDeviceAlreadySelected(address: String): Boolean {
-        val isInHbs = hbsDevices.any { it.device.address == address }
-        val isInWgd = wgdDevices.any { it.device.address == address }
-        val isInXyk = xykDevices.any { it.device.address == address }
-        return isInHbs || isInWgd || isInXyk
     }
 
     private fun updateScanResultsUI() {
-        val now = System.currentTimeMillis()
-        val iterator = deviceLastSeen.entries.iterator()
-        while (iterator.hasNext()) {
-            val entry = iterator.next()
-            // 如果设备超过3秒未被再次发现，则移除
-            if (now - entry.value > 3000) {
-                iterator.remove()
-                scannedDevicesMap.remove(entry.key)
+        val currentTime = System.currentTimeMillis()
+
+        // Remove stale devices from the scan list
+        scannedDevicesMap.entries.removeIf { (address, _) ->
+            (currentTime - (deviceLastSeen[address] ?: currentTime)) > 5000
+        }
+
+        val sortedList = scannedDevicesMap.values.sortedByDescending { it.rssi }
+        scanAdapter.updateList(sortedList)
+
+        // Check selected lists for stale devices and remove them
+        var listChanged = false
+        val staleDevicePredicate: (DeviceScanResult) -> Boolean = {
+            (currentTime - (deviceLastSeen[it.device.address] ?: 0)) > 5000 // 5-second timeout
+        }
+
+        if (hbsDevices.removeIf(staleDevicePredicate)) listChanged = true
+        if (wgdDevices.removeIf(staleDevicePredicate)) listChanged = true
+        if (xykDevices.removeIf(staleDevicePredicate)) listChanged = true
+
+        if (listChanged) {
+            activity?.runOnUiThread {
+                updateAllStatusLists()
+                saveDeviceLists()
+                Toast.makeText(context, "已自动移除离线设备", Toast.LENGTH_SHORT).show()
             }
         }
-
-        val deviceList = scannedDevicesMap.values.sortedByDescending { it.rssi }
-        scanAdapter.updateList(deviceList)
     }
 
-    private fun addDeviceToCategory(device: DeviceScanResult) {
-        val sensorType = device.bestName.split(" ").getOrNull(1)?.split("_")?.getOrNull(0)?.toIntOrNull()
-
-        when (sensorType) {
-            1, 2, 6 -> addToHbs(device) // HBS
-            3, 4 -> addToWgd(device)    // WGD
-            5 -> addToXyk(device)       // XYK
-            else -> {
-                Toast.makeText(requireContext(), "无法识别的设备类型: ${device.bestName}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-
-    private fun addToHbs(device: DeviceScanResult) {
-        if (!hbsDevices.any { it.device.address == device.device.address }) {
-            hbsDevices.add(device)
-            scannedDevicesMap.remove(device.device.address)
-            deviceLastSeen.remove(device.device.address)
-            updateAllStatusLists()
-            saveDeviceLists()
-        }
-    }
-
-    private fun addToWgd(device: DeviceScanResult) {
-        if (!wgdDevices.any { it.device.address == device.device.address }) {
-            wgdDevices.add(device)
-            scannedDevicesMap.remove(device.device.address)
-            deviceLastSeen.remove(device.device.address)
-            updateAllStatusLists()
-            saveDeviceLists()
-        }
-    }
-
-    private fun addToXyk(device: DeviceScanResult) {
-        if (xykDevices.isNotEmpty()) {
-            val oldDevice = xykDevices.first()
-            scannedDevicesMap[oldDevice.device.address] = oldDevice
-            deviceLastSeen[oldDevice.device.address] = System.currentTimeMillis()
-        }
-        xykDevices.clear()
-        xykDevices.add(device)
-        scannedDevicesMap.remove(device.device.address)
-        deviceLastSeen.remove(device.device.address)
-        updateAllStatusLists()
-        saveDeviceLists()
-    }
-
-    private fun handleRemoveFromHbs(device: DeviceScanResult) {
-        hbsDevices.remove(device)
-        scannedDevicesMap[device.device.address] = device
-        deviceLastSeen[device.device.address] = System.currentTimeMillis()
-        updateAllStatusLists()
-        saveDeviceLists()
-    }
-
-    private fun handleRemoveFromWgd(device: DeviceScanResult) {
-        wgdDevices.remove(device)
-        scannedDevicesMap[device.device.address] = device
-        deviceLastSeen[device.device.address] = System.currentTimeMillis()
-        updateAllStatusLists()
-        saveDeviceLists()
-    }
-
-    private fun handleRemoveFromXyk() {
-        if (xykDevices.isNotEmpty()) {
-            val device = xykDevices.first()
-            xykDevices.clear()
-            scannedDevicesMap[device.device.address] = device
-            deviceLastSeen[device.device.address] = System.currentTimeMillis()
-            updateAllStatusLists()
-            saveDeviceLists()
-        }
-    }
-
-    private fun updateAllStatusLists() {
-        updateScanResultsUI()
-
-        hbsAdapter.updateList(hbsDevices.toList())
-        hbsTitleTextView.text = "后背绳 (${hbsDevices.size})"
-
-        wgdAdapter.updateList(wgdDevices.toList())
-        wgdTitleTextView.text = "围杆带 (${wgdDevices.size})"
-
-        updateXykDevice()
-    }
-
-    private fun updateXykDevice() {
-        if (xykDevices.isNotEmpty()) {
-            val device = xykDevices.first()
-            xykDeviceNameTextView.text = device.bestName
-            xykDeviceNameTextView.visibility = View.VISIBLE
-            xykRemoveButton.visibility = View.VISIBLE
-        } else {
-            xykDeviceNameTextView.visibility = View.GONE
-            xykRemoveButton.visibility = View.GONE
-        }
-    }
-
-    private fun saveDeviceLists() {
-        val editor = sharedPreferences.edit()
-        editor.putString("hbs_devices", gson.toJson(hbsDevices))
-        editor.putString("wgd_devices", gson.toJson(wgdDevices))
-        editor.putString("xyk_devices", gson.toJson(xykDevices))
-        editor.apply()
-    }
-
-    private fun loadDeviceLists() {
-        val hbsJson = sharedPreferences.getString("hbs_devices", null)
-        val wgdJson = sharedPreferences.getString("wgd_devices", null)
-        val xykJson = sharedPreferences.getString("xyk_devices", null)
-
-        val listType = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
-
-        hbsJson?.let { hbsDevices = gson.fromJson(it, listType) }
-        wgdJson?.let { wgdDevices = gson.fromJson(it, listType) }
-        xykJson?.let { xykDevices = gson.fromJson(it, listType) }
+    private fun getSensorTypeFromDeviceName(deviceName: String): Int? {
+        return deviceName.split(" ").getOrNull(1)?.split("_")?.getOrNull(0)?.toIntOrNull()
     }
 }
