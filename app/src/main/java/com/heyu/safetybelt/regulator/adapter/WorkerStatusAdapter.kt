@@ -140,12 +140,13 @@ class WorkerStatusAdapter(
             session.put("adminAlert", true)
             
             button.isEnabled = false
+            Toast.makeText(context, "正在发送报警指令...", Toast.LENGTH_SHORT).show()
             
             session.saveInBackground().subscribe(object : Observer<LCObject> {
                 override fun onSubscribe(d: Disposable) {}
                 override fun onNext(t: LCObject) {
                     handler.post {
-                        Toast.makeText(context, "报警指令已发送", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "报警指令已发送给 ${workerStatus.workerName}", Toast.LENGTH_SHORT).show()
                         handler.postDelayed({ button.isEnabled = workerStatus.isOnline }, 2000)
                     }
                 }
@@ -178,12 +179,14 @@ class WorkerStatusAdapter(
         updateSensorViews(sensorViews, workerStatus)
 
         // --- Work History Setup ---
+        // 找回丢失的逻辑：初始化历史记录列表和加载数据
         val workHistoryRecyclerView = dialogView.findViewById<RecyclerView>(R.id.work_history_recycler_view)
         val emptyHistoryView = dialogView.findViewById<TextView>(R.id.empty_history_view)
         workHistoryRecyclerView.layoutManager = LinearLayoutManager(context)
         val historyAdapter = WorkHistoryAdapter(emptyList())
         workHistoryRecyclerView.adapter = historyAdapter
 
+        // 调用找回的方法加载数据
         fetchWorkHistory(workerStatus.workerId, historyAdapter, emptyHistoryView)
 
         // --- Dialog Creation ---
@@ -209,12 +212,13 @@ class WorkerStatusAdapter(
         activeDialogViews = sensorViews
     }
 
+    // 找回丢失的方法：从 LeanCloud 获取历史记录
     private fun fetchWorkHistory(workerId: String, adapter: WorkHistoryAdapter, emptyView: View) {
         val workerPointer = LCObject.createWithoutData("_User", workerId)
         val query = LCQuery<LCObject>("WorkSession")
         query.whereEqualTo("worker", workerPointer)
         query.orderByDescending("startTime")
-        query.limit = 50 // Limit the number of history items
+        query.limit = 50 // 限制显示最近50条
         query.findInBackground().subscribe(object : Observer<List<LCObject>> {
             override fun onSubscribe(d: Disposable) {}
             override fun onNext(sessions: List<LCObject>) {

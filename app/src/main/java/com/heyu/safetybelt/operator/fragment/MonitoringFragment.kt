@@ -62,12 +62,18 @@ class MonitoringFragment : Fragment() {
     private val alarmingDevices = ConcurrentHashMap.newKeySet<String>()
     private var currentSessionAlarmCount = 0
     private var isAlarmDialogShowing = false
+    private var isAdminAlarmDialogShowing = false // Flag specifically for Admin Alarm
 
     private val serviceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent == null) return
 
             when (intent.action) {
+                BleService.ACTION_SHOW_ADMIN_ALERT -> {
+                    if (!isAdminAlarmDialogShowing) {
+                        showAdminAlertDialog()
+                    }
+                }
                 BleService.ACTION_SHOW_ALARM_DIALOG -> {
                     if (!isAlarmDialogShowing) {
                         val messages = intent.getStringArrayListExtra(BleService.EXTRA_ALARM_MESSAGES)
@@ -80,7 +86,7 @@ class MonitoringFragment : Fragment() {
                     val address = intent.getStringExtra(BleService.EXTRA_DEVICE_ADDRESS) ?: return
                     val typeAndSlot = addressToTypeAndSlotMap[address]
                     if (typeAndSlot == null) {
-                        Log.w(TAG, "Received update for a device not in the current configuration: $address")
+                        // Log.w(TAG, "Received update for a device not in the current configuration: $address")
                         return
                     }
                     val (sensorType, slotIndex) = typeAndSlot
@@ -160,6 +166,7 @@ class MonitoringFragment : Fragment() {
             addAction(BleService.ACTION_STATUS_UPDATE)
             addAction(BleService.ACTION_HEARTBEAT_UPDATE)
             addAction(BleService.ACTION_SHOW_ALARM_DIALOG)
+            addAction(BleService.ACTION_SHOW_ADMIN_ALERT) // Register for Admin Alert
         }
         LocalBroadcastManager.getInstance(requireContext()).registerReceiver(serviceReceiver, filter)
     }
@@ -378,6 +385,26 @@ class MonitoringFragment : Fragment() {
                 dialog.dismiss()
             }
             .setOnDismissListener { isAlarmDialogShowing = false }
+            .show()
+    }
+
+    // New Dialog for Remote Admin Alert
+    private fun showAdminAlertDialog() {
+        if (!isAdded || isAdminAlarmDialogShowing) return
+        isAdminAlarmDialogShowing = true
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("远程警报")
+            .setMessage("安监员向您发送了警报提醒，请立即检查安全带！")
+            .setIcon(R.drawable.ic_dialog_warning)
+            .setCancelable(false) // Prevent dismissing by clicking outside
+            .setPositiveButton("收到") { dialog, _ ->
+                // Send broadcast to Service to reset the alarm flag
+                val intent = Intent(BleService.ACTION_RESET_ADMIN_ALERT)
+                LocalBroadcastManager.getInstance(requireContext()).sendBroadcast(intent)
+                dialog.dismiss()
+            }
+            .setOnDismissListener { isAdminAlarmDialogShowing = false }
             .show()
     }
 

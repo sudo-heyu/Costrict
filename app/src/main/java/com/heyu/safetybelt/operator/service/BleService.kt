@@ -24,11 +24,17 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import cn.leancloud.LCException
 import cn.leancloud.LCObject
+import cn.leancloud.LCQuery
 import cn.leancloud.LCUser
+import cn.leancloud.livequery.LCLiveQuery
+import cn.leancloud.livequery.LCLiveQueryEventHandler
+import cn.leancloud.livequery.LCLiveQuerySubscribeCallback
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.common.AlarmEvent
 import com.heyu.safetybelt.operator.model.DeviceScanResult
+import com.heyu.safetybelt.common.WorkSession
 import io.reactivex.Observer
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
@@ -65,6 +71,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     private val deviceStates = ConcurrentHashMap<String, DeviceState>() // The primary state holder
     private var currentSessionId: String? = null
     private val compositeDisposable = CompositeDisposable()
+    
+    // --- LiveQuery Management ---
+    private var liveQuery: LCLiveQuery? = null
 
     // --- Handlers ---
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -118,7 +127,13 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_CONNECT_DEVICES -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
-                currentSessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                val newSessionId = intent.getStringExtra(EXTRA_SESSION_ID)
+                
+                if (newSessionId != null) {
+                    currentSessionId = newSessionId
+                    startLiveQuery(newSessionId)
+                }
+                
                 cleanupConnectionsAndState()
                 updateWorkSession(isOnline = true)
                 devices?.forEach { device ->
@@ -143,6 +158,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 mainHandler.postDelayed(muteRunnable, MUTE_DURATION_MS)
                 if (this::tts.isInitialized) tts.stop()
             }
+            ACTION_RESET_ADMIN_ALERT -> {
+                resetAdminAlert()
+            }
         }
 
         return START_REDELIVER_INTENT
@@ -155,8 +173,84 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             tts.shutdown()
         }
         disconnectAllDevices(false)
+        stopLiveQuery()
         reconnectHandler.removeCallbacksAndMessages(null)
         compositeDisposable.clear()
+    }
+
+    // --- LiveQuery & Remote Alert ---
+
+    private fun startLiveQuery(sessionId: String) {
+        stopLiveQuery() // Ensure previous subscription is cleared
+
+        val query = LCQuery<WorkSession>("WorkSession").whereEqualTo("objectId", sessionId)
+        liveQuery = LCLiveQuery.initWithQuery(query)
+        
+        liveQuery?.setEventHandler(object : LCLiveQueryEventHandler() {
+            override fun onObjectUpdated(obj: LCObject?, updateKeyList: MutableList<String>?) {
+                if (obj == null) return
+                // Check if adminAlert field is updated to true
+                if (updateKeyList?.contains("adminAlert") == true) {
+                    // Fetch the latest object to get the actual value, avoiding race conditions or incomplete data
+                    fetchWorkSessionAndCheckAlert(obj.objectId)
+                }
+            }
+        })
+
+        liveQuery?.subscribeInBackground(object : LCLiveQuerySubscribeCallback() {
+            override fun done(e: LCException?) {
+                if (e == null) {
+                    Log.d(TAG, "LiveQuery subscribed successfully for session: $sessionId")
+                } else {
+                    Log.e(TAG, "LiveQuery subscription failed", e)
+                }
+            }
+        })
+    }
+
+    private fun stopLiveQuery() {
+        liveQuery?.unsubscribeInBackground(object : LCLiveQuerySubscribeCallback() {
+            override fun done(e: LCException?) {
+                Log.d(TAG, "LiveQuery unsubscribed")
+            }
+        })
+        liveQuery = null
+    }
+
+    private fun fetchWorkSessionAndCheckAlert(sessionId: String) {
+        val query = LCQuery<WorkSession>("WorkSession")
+        query.getInBackground(sessionId).subscribe(object : Observer<WorkSession> {
+            override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
+            override fun onNext(session: WorkSession) {
+                if (session.getBoolean("adminAlert")) {
+                    sendAdminAlertBroadcast()
+                }
+            }
+            override fun onError(e: Throwable) {
+                Log.e(TAG, "Failed to fetch WorkSession for alert check", e)
+            }
+            override fun onComplete() {}
+        })
+    }
+
+    private fun sendAdminAlertBroadcast() {
+        val intent = Intent(ACTION_SHOW_ADMIN_ALERT)
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+        // Optionally trigger local vibration/sound here as well
+        triggerVibration()
+    }
+
+    private fun resetAdminAlert() {
+        if (currentSessionId.isNullOrEmpty()) return
+        
+        val session = LCObject.createWithoutData("WorkSession", currentSessionId!!)
+        session.put("adminAlert", false)
+        session.saveInBackground().subscribe(object : Observer<LCObject> {
+            override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
+            override fun onNext(t: LCObject) { Log.d(TAG, "Admin alert reset successfully") }
+            override fun onError(e: Throwable) { Log.e(TAG, "Failed to reset admin alert", e) }
+            override fun onComplete() {}
+        })
     }
 
     // --- Connection Management ---
@@ -175,6 +269,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     private fun disconnectAllDevices(isManual: Boolean) {
         val addresses = deviceStates.keys.toList()
         cleanupConnectionsAndState()
+        stopLiveQuery() // Also stop LiveQuery when disconnecting
 
         if (isManual) {
             updateWorkSession(isOnline = false, status = "手动断开", shouldEndSession = true)
@@ -613,6 +708,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_DISCONNECT_ALL = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_ALL"
         const val ACTION_RETRY_CONNECTION = "com.heyu.safetybeltoperators.ACTION_RETRY_CONNECTION"
         const val ACTION_MUTE_ALARMS = "com.heyu.safetybeltoperators.ACTION_MUTE_ALARMS"
+        const val ACTION_RESET_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_RESET_ADMIN_ALERT" // New Action
+        const val ACTION_SHOW_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_SHOW_ADMIN_ALERT" // New Action
+
         const val EXTRA_DEVICES = "com.heyu.safetybeltoperators.EXTRA_DEVICES"
         const val EXTRA_SESSION_ID = "com.heyu.safetybeltoperators.EXTRA_SESSION_ID"
 
