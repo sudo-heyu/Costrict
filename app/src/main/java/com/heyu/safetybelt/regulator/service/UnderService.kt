@@ -157,7 +157,7 @@ class UnderService : Service() {
                 sensor4Status = session?.getString("sensor4Status"),
                 sensor5Status = session?.getString("sensor5Status"),
                 sensor6Status = session?.getString("sensor6Status"),
-                sessionId = session?.objectId // 修复：添加 sessionId
+                sessionId = session?.objectId
             )
             cachedWorkerList.add(workerStatus)
             notifyListener()
@@ -252,9 +252,14 @@ class UnderService : Service() {
 
     private fun fetchSessionAndRefresh(sessionId: String) {
         val query = LCQuery<WorkSession>("WorkSession").include("worker")
+        // Force network request to bypass cache and get the latest data.
+        query.setCachePolicy(LCQuery.CachePolicy.NETWORK_ONLY)
         query.getInBackground(sessionId).subscribe(object : Observer<WorkSession> {
             override fun onSubscribe(d: Disposable) {}
-            override fun onNext(session: WorkSession) { updateWorkerStatusFromFullSession(session, true) }
+            override fun onNext(session: WorkSession) {
+                // Correctly use the isOnline value from the fetched session
+                updateWorkerStatusFromFullSession(session, session.isOnline)
+            }
             override fun onError(e: Throwable) { Log.e("UnderService", "Fetch session failed: ${e.message}") }
             override fun onComplete() {}
         })
@@ -285,11 +290,11 @@ class UnderService : Service() {
                 sensor4Status = session.getString("sensor4Status"),
                 sensor5Status = session.getString("sensor5Status"),
                 sensor6Status = session.getString("sensor6Status"),
-                sessionId = session.objectId // 修复：添加 sessionId
+                sessionId = session.objectId
             )
         } else {
             removeAbnormalWorker(workerId)
-            oldStatus.copy(status = "离线", lastUpdatedAt = Date(), isOnline = false, sessionId = null) // 修复：清空 sessionId
+            oldStatus.copy(status = "离线", lastUpdatedAt = Date(), isOnline = false, sessionId = null)
         }
     }
 
@@ -312,14 +317,41 @@ class UnderService : Service() {
                     .associateBy { it.getLCObject<Worker>("worker")!!.objectId }
 
                 val updatedStatusList = cachedWorkerList.map { oldStatus ->
-                    latestSessionMap[oldStatus.workerId]?.let { createUpdatedStatus(oldStatus, it, true) } 
-                        ?: oldStatus.copy(status = "离线", isOnline = false, sessionId = null).also { removeAbnormalWorker(oldStatus.workerId) } // 修复：清空 sessionId
+                    latestSessionMap[oldStatus.workerId]?.let {
+                        createUpdatedStatus(oldStatus, it, true)
+                    } ?: run {
+                        // Worker is now offline. Check if they were online before.
+                        if (oldStatus.isOnline && oldStatus.sessionId != null) {
+                            endWorkSession(oldStatus.sessionId!!)
+                        }
+                        // Create the new offline status object
+                        createUpdatedStatus(oldStatus, WorkSession(), false)
+                    }
                 }
                 cachedWorkerList.clear()
                 cachedWorkerList.addAll(updatedStatusList)
                 notifyListener()
             }
             override fun onError(e: Throwable) { Log.e("UnderService", "Refresh failed: ${e.message}") }
+            override fun onComplete() {}
+        })
+    }
+
+    private fun endWorkSession(sessionId: String) {
+        if (sessionId.isEmpty()) return
+
+        val session = LCObject.createWithoutData("WorkSession", sessionId)
+        session.put("endTime", Date())
+        session.put("isOnline", false) // Explicitly mark as not online
+
+        session.saveInBackground().subscribe(object : Observer<LCObject> {
+            override fun onSubscribe(d: Disposable) {}
+            override fun onNext(t: LCObject) {
+                Log.d("UnderService", "Successfully ended work session: $sessionId")
+            }
+            override fun onError(e: Throwable) {
+                Log.e("UnderService", "Failed to end work session: $sessionId", e)
+            }
             override fun onComplete() {}
         })
     }

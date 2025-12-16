@@ -151,7 +151,10 @@ class MonitoringFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         setupDeviceList()
         setupButtons()
-        binding.backButton.setOnClickListener { parentFragmentManager.popBackStack() }
+        binding.backButton.setOnClickListener {
+            // Just pop the back stack, don't end the session.
+            parentFragmentManager.popBackStack()
+        }
 
         val filter = IntentFilter().apply {
             addAction(BleService.ACTION_STATUS_UPDATE)
@@ -166,12 +169,8 @@ class MonitoringFragment : Fragment() {
         LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(serviceReceiver)
         countdownHandler.removeCallbacksAndMessages(null)
         
-        // The following lines are commented out to persist the session and connection
-        // endWorkSession()
-        // val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
-        //     action = BleService.ACTION_DISCONNECT_ALL
-        // }
-        // requireContext().startService(serviceIntent)
+        // The session is no longer ended here to allow navigating back and forth.
+        // Session is now only ended on manual disconnect or if all devices are lost.
 
         compositeDisposable.clear()
         _binding = null
@@ -347,44 +346,16 @@ class MonitoringFragment : Fragment() {
         })
     }
 
-    private fun endWorkSession() {
-        if (currentSessionId == null) {
-            Log.w(TAG, "endWorkSession called but currentSessionId is null.")
-            return
-        }
-
-        val session = LCObject.createWithoutData("WorkSession", currentSessionId!!)
-        session.put("endTime", Date())
-        session.put("isOnline", false)
-        session.put("totalAlarmCount", currentSessionAlarmCount)
-
-        session.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
-            override fun onSubscribe(d: io.reactivex.disposables.Disposable) { compositeDisposable.add(d) }
-            override fun onNext(t: LCObject) {
-                Log.d(TAG, "Successfully ended work session: ${t.objectId}")
-            }
-            override fun onError(e: Throwable) {
-                Log.e(TAG, "Failed to end work session: $currentSessionId", e)
-            }
-            override fun onComplete() {
-                currentSessionId = null
-                currentSessionAlarmCount = 0
-            }
-        })
-    }
-
     private fun showDisconnectConfirmationDialog() {
         AlertDialog.Builder(requireContext())
             .setTitle("断开连接")
-            .setMessage("您确定要断开所有设备的连接吗？")
+            .setMessage("您确定要断开所有设备的连接吗？这将结束本次工作记录。")
             .setPositiveButton("确定") { _, _ ->
-                // End cloud session first
-                endWorkSession()
-
-                // Then disconnect BLE devices
+                // ONLY send the intent. The service is responsible for ending the session.
                 val serviceIntent = Intent(requireContext(), BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
                 requireContext().startService(serviceIntent)
 
+                // Update local state and UI
                 WorkRecordManager.stopCurrentWork(requireContext(), currentSessionAlarmCount)
                 alarmingDevices.clear()
                 handleDisconnectUI()

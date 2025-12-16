@@ -7,7 +7,8 @@
     <string name="remove_device">Remove device</string>
     <string name="work_history_start_time">开始: %1$s</string>
     <string name="work_history_end_time">结束: %1$s</string>
-    <string name="work_history_alert_count">报警: %1$d次</string>
     <string name="work_history_duration">时长: %1$d小时%2$d分钟</string>
     <string name="work_history_duration_unknown">时长: 未知</string>
+    <string name="work_history_device_alert">发生报警：%1$s</string>
+    <string name="work_history_admin_alert">远程报警：%1$s</string>
 </resources>

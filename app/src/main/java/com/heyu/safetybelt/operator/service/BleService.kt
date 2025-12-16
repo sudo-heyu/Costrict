@@ -177,10 +177,10 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         cleanupConnectionsAndState()
 
         if (isManual) {
-            updateWorkSession(isOnline = false, status = "手动断开")
+            updateWorkSession(isOnline = false, status = "手动断开", shouldEndSession = true)
             addresses.forEach { broadcastStatus(it, "待连接", "GRAY", false) }
         } else {
-            updateWorkSession(isOnline = false, status = "离线")
+            updateWorkSession(isOnline = false, status = "离线", shouldEndSession = true)
         }
     }
 
@@ -213,6 +213,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             Log.w(TAG, "Max reconnect attempts reached for $address. Stopping.")
             broadcastStatus(address, "重连失败", "YELLOW", true)
+            state.connectionStatus = ConnectionStatus.FAILED
+            checkAllDevicesDisconnected()
             return
         }
 
@@ -222,6 +224,16 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
         val reconnectRunnable = Runnable { connectWithTimeout(address) }
         reconnectHandler.postDelayed(reconnectRunnable, RECONNECT_DELAY_MS)
+    }
+
+    private fun checkAllDevicesDisconnected() {
+        val allDisconnected = deviceStates.values.all {
+            it.connectionStatus == ConnectionStatus.DISCONNECTED || it.connectionStatus == ConnectionStatus.FAILED
+        }
+        if (allDisconnected) {
+            Log.d(TAG, "All devices are disconnected. Ending work session.")
+            updateWorkSession(isOnline = false, status = "设备离线", shouldEndSession = true)
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -507,7 +519,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         })
     }
 
-    private fun updateWorkSession(status: String? = null, isOnline: Boolean? = null, partStatuses: Array<SensorStatus>? = null) {
+    private fun updateWorkSession(status: String? = null, isOnline: Boolean? = null, partStatuses: Array<SensorStatus>? = null, shouldEndSession: Boolean = false) {
         if (currentSessionId.isNullOrEmpty()) return
         val sessionToUpdate = LCObject.createWithoutData("WorkSession", currentSessionId!!)
         var shouldSave = false
@@ -519,6 +531,10 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         isOnline?.let {
             sessionToUpdate.put("isOnline", it)
+            shouldSave = true
+        }
+        if (shouldEndSession) {
+            sessionToUpdate.put("endTime", Date())
             shouldSave = true
         }
         partStatuses?.let {
