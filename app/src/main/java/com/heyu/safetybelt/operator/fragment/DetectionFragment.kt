@@ -117,6 +117,10 @@ class DetectionFragment : Fragment() {
     override fun onDestroyView() {
         super.onDestroyView()
         stopBleScan()
+        hbsDevices.clear()
+        wgdDevices.clear()
+        xykDevices.clear()
+        sharedPreferences.edit().clear().apply()
         rx3CompositeDisposable.clear()
         rx2CompositeDisposable.clear()
         _binding = null
