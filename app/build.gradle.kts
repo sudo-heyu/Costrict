@@ -48,6 +48,7 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.activity:activity-ktx:1.9.0")
     implementation("com.google.code.gson:gson:2.10.1")
+
     implementation("androidx.localbroadcastmanager:localbroadcastmanager:1.1.0")
 
     // RxJava
@@ -69,7 +70,6 @@ dependencies {
     implementation("androidx.navigation:navigation-ui-ktx:2.7.7")
 
     // LeanCloud
-    implementation("cn.leancloud:storage-android:8.2.28")
     implementation("cn.leancloud:realtime-android:8.2.28")
     // LeanCloud Dependencies
     implementation("cn.leancloud:storage-core:8.2.22")
