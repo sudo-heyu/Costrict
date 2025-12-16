@@ -18,7 +18,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.regulator.model.WorkerStatus
+import com.heyu.safetybelt.common.WorkerStatus
 import io.reactivex.Observer
 import io.reactivex.disposables.Disposable
 import java.util.Locale

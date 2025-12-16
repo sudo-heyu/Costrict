@@ -22,9 +22,9 @@ import cn.leancloud.livequery.LCLiveQuery
 import cn.leancloud.livequery.LCLiveQueryEventHandler
 import cn.leancloud.livequery.LCLiveQuerySubscribeCallback
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.regulator.model.WorkSession
-import com.heyu.safetybelt.regulator.model.Worker
-import com.heyu.safetybelt.regulator.model.WorkerStatus
+import com.heyu.safetybelt.common.WorkSession
+import com.heyu.safetybelt.common.Worker
+import com.heyu.safetybelt.common.WorkerStatus
 import io.reactivex.Observer
 import io.reactivex.disposables.Disposable
 import java.util.Date

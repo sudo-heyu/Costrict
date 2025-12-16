@@ -11,7 +11,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.operator.adapter.WorkRecordAdapter
-import com.heyu.safetybelt.operator.data.WorkRecordManager
+import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.model.WorkRecord
 
 class WorkRecordFragment : Fragment() {

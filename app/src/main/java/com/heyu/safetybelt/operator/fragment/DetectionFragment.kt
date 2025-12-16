@@ -33,8 +33,8 @@ import com.google.gson.reflect.TypeToken
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.operator.adapter.ScanDeviceAdapter
 import com.heyu.safetybelt.operator.adapter.StatusDeviceAdapter
-import com.heyu.safetybelt.operator.bean.DeviceScanResult
-import com.heyu.safetybelt.operator.data.Device
+import com.heyu.safetybelt.operator.model.DeviceScanResult
+import com.heyu.safetybelt.common.Device
 import com.heyu.safetybelt.databinding.FragmentDetectionBinding
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Observable

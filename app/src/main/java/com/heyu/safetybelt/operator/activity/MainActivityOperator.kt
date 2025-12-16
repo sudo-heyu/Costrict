@@ -22,7 +22,7 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.operator.fragment.WorkRecordFragment
-import com.heyu.safetybelt.operator.data.WorkRecordManager
+import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.fragment.ProfileFragment
 import com.heyu.safetybelt.operator.fragment.SafetybeltFragment
 

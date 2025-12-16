@@ -8,7 +8,7 @@ import android.widget.ImageButton
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.operator.bean.DeviceScanResult
+import com.heyu.safetybelt.operator.model.DeviceScanResult
 
 /**
  * 用于在蓝牙扫描页面的上半部分，显示用户已选择并归类的设备列表的 RecyclerView 适配器。

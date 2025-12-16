@@ -8,7 +8,7 @@ import android.widget.ImageButton
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.operator.bean.DeviceScanResult
+import com.heyu.safetybelt.operator.model.DeviceScanResult
 import com.heyu.safetybelt.operator.util.MonitoringUtil
 
 class ScanDeviceAdapter(

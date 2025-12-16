@@ -3,23 +3,23 @@ package com.heyu.safetybelt.application
 import android.app.Application
 import cn.leancloud.LCObject
 import cn.leancloud.LeanCloud
-import com.heyu.safetybelt.operator.data.AlarmEvent
-import com.heyu.safetybelt.operator.data.Device
-import com.heyu.safetybelt.regulator.model.WorkSession
-import com.heyu.safetybelt.regulator.model.Worker
+import com.heyu.safetybelt.common.AlarmEvent
+import com.heyu.safetybelt.common.Device
+//import com.heyu.safetybelt.regulator.model.WorkSession
+//import com.heyu.safetybelt.regulator.model.Worker
 
 class MainApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
         // 安监人员端注册子类 (Best Practice)
-        LCObject.registerSubclass(Worker::class.java)
-        LCObject.registerSubclass(WorkSession::class.java)
+//        LCObject.registerSubclass(Worker::class.java)
+//        LCObject.registerSubclass(WorkSession::class.java)
         //工人端注册子类
-        LCObject.registerSubclass(com.heyu.safetybelt.operator.data.Worker::class.java)
+        LCObject.registerSubclass(com.heyu.safetybelt.common.Worker::class.java)
         LCObject.registerSubclass(Device::class.java)
         LCObject.registerSubclass(AlarmEvent::class.java)
-        LCObject.registerSubclass(com.heyu.safetybelt.operator.data.WorkSession::class.java)
+        LCObject.registerSubclass(com.heyu.safetybelt.common.WorkSession::class.java)
 
         // 初始化 LeanCloud SDK
         LeanCloud.initialize(

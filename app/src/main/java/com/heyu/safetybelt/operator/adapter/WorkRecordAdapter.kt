@@ -9,7 +9,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.operator.data.WorkRecordManager
+import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.fragment.AlarmDetailDialogFragment
 import com.heyu.safetybelt.operator.model.WorkRecord
 

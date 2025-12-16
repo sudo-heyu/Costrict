@@ -18,7 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.regulator.adapter.WorkerStatusAdapter
 import com.heyu.safetybelt.databinding.FragmentMonitoringBinding
-import com.heyu.safetybelt.regulator.model.WorkerStatus
+import com.heyu.safetybelt.common.WorkerStatus
 import com.heyu.safetybelt.regulator.service.UnderService
 
 class MonitoringFragment : Fragment(), UnderService.WorkerListListener {

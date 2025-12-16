@@ -26,11 +26,11 @@ import androidx.fragment.app.Fragment
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import cn.leancloud.LCObject
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.operator.data.WorkRecordManager
+import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.activity.MainActivityOperator
-import com.heyu.safetybelt.operator.bean.DeviceScanResult
-import com.heyu.safetybelt.operator.data.WorkSession
-import com.heyu.safetybelt.operator.BleService
+import com.heyu.safetybelt.operator.model.DeviceScanResult
+import com.heyu.safetybelt.common.WorkSession
+import com.heyu.safetybelt.operator.service.BleService
 import com.heyu.safetybelt.databinding.FragmentMonitoringWorkerBinding
 import io.reactivex.disposables.CompositeDisposable
 import java.util.Date

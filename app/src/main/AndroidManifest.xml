@@ -35,13 +35,13 @@ android:theme="@style/Theme.SafetybeltRegulator">
     android:exported="false"
     android:foregroundServiceType="dataSync" />
     <service
-        android:name="com.heyu.safetybelt.operator.BleService"
+        android:name="com.heyu.safetybelt.operator.service.BleService"
         android:foregroundServiceType="connectedDevice" />
 
 
 
     <activity
-    android:name="com.heyu.safetybelt.SplashActivity"
+    android:name="com.heyu.safetybelt.common.activity.SplashActivity"
     android:exported="true">
     <intent-filter>
         <action android:name="android.intent.action.MAIN" />
@@ -49,7 +49,7 @@ android:theme="@style/Theme.SafetybeltRegulator">
     </intent-filter>
     </activity>
     <activity
-        android:name="com.heyu.safetybelt.LoginActivity"
+        android:name="com.heyu.safetybelt.common.activity.LoginActivity"
         android:exported="false" />
 
 

@@ -15,7 +15,7 @@ import cn.leancloud.LCObject
 import cn.leancloud.LCQuery
 import cn.leancloud.LCUser
 import com.heyu.safetybelt.R
-import com.heyu.safetybelt.operator.data.Worker
+import com.heyu.safetybelt.common.Worker
 import io.reactivex.Observer
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
