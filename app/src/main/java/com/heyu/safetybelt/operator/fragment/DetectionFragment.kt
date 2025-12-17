@@ -83,6 +83,7 @@ class DetectionFragment : Fragment() {
 
     private lateinit var sharedPreferences: SharedPreferences
     private val gson = Gson()
+    private var currentWorkerId: String? = null // New: To track the current user.
 
     private lateinit var xykDeviceNameTextView: TextView
     private lateinit var xykRemoveButton: ImageButton
@@ -101,13 +102,37 @@ class DetectionFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        sharedPreferences = requireActivity().getSharedPreferences("DeviceLists", Context.MODE_PRIVATE)
+
+        val newWorkerId = requireActivity().intent.getStringExtra("workerObjectId")
+        if (newWorkerId == null) {
+            Toast.makeText(requireContext(), "错误: 无法获取用户ID", Toast.LENGTH_LONG).show()
+            parentFragmentManager.popBackStack()
+            return
+        }
+
+        // --- The Core of the Final Fix ---
+        if (currentWorkerId != newWorkerId) {
+            Log.d("DetectionFragment", "New user detected. Old: $currentWorkerId, New: $newWorkerId. Resetting state.")
+            // This is a new session or user switch. Reset everything.
+            currentWorkerId = newWorkerId
+            sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
+            
+            // 1. Clear disk cache for the new user SYNCHRONOUSLY.
+            sharedPreferences.edit().clear().commit()
+            
+            // 2. Clear in-memory lists.
+            hbsDevices.clear()
+            wgdDevices.clear()
+            xykDevices.clear()
+        } else {
+             Log.d("DetectionFragment", "Same user detected: $currentWorkerId. State preserved.")
+        }
 
         setupUI()
-        loadDeviceLists()
+        loadDeviceLists() // Now this will load into a clean slate on new login.
         updateAllStatusLists()
 
-        checkAndRequestPermissions() // This will trigger the automatic scan
+        checkAndRequestPermissions()
     }
 
     override fun onDestroyView() {
@@ -119,6 +144,7 @@ class DetectionFragment : Fragment() {
     }
 
     private fun saveDeviceLists() {
+        if (!::sharedPreferences.isInitialized) return
         with(sharedPreferences.edit()) {
             putString("hbs_devices", gson.toJson(hbsDevices))
             putString("wgd_devices", gson.toJson(wgdDevices))
@@ -128,16 +154,21 @@ class DetectionFragment : Fragment() {
     }
 
     private fun loadDeviceLists() {
-        val typeHbs = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
-        sharedPreferences.getString("hbs_devices", null)?.let { hbsDevices = gson.fromJson(it, typeHbs) }
-
-        val typeWgd = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
-        sharedPreferences.getString("wgd_devices", null)?.let { wgdDevices = gson.fromJson(it, typeWgd) }
-
-        val typeXyk = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
-        sharedPreferences.getString("xyk_devices", null)?.let { xykDevices = gson.fromJson(it, typeXyk) }
+        // This function now correctly loads data into a clean or preserved state.
+        if (!::sharedPreferences.isInitialized) {
+             if(currentWorkerId != null) { // Defensive check
+                 sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
+             } else { 
+                 return // Should not happen due to the check in onViewCreated
+             }
+        }
+        val type = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
+        sharedPreferences.getString("hbs_devices", null)?.let { hbsDevices = gson.fromJson(it, type) }
+        sharedPreferences.getString("wgd_devices", null)?.let { wgdDevices = gson.fromJson(it, type) }
+        sharedPreferences.getString("xyk_devices", null)?.let { xykDevices = gson.fromJson(it, type) }
     }
 
+    // ... (The rest of the file remains the same) ...
     private fun addDeviceToCategory(device: DeviceScanResult) {
         val deviceAddress = device.device.address
         val alreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
@@ -146,7 +177,7 @@ class DetectionFragment : Fragment() {
 
         if (alreadySelected) {
             activity?.runOnUiThread {
-                Toast.makeText(context, "设备 ${device.bestName} 已选择", Toast.LENGTH_SHORT).show()
+                if (isAdded) Toast.makeText(context, "设备 ${device.bestName} 已选择", Toast.LENGTH_SHORT).show()
             }
             return
         }
@@ -163,12 +194,12 @@ class DetectionFragment : Fragment() {
                     xykDevices.add(device)
                 } else {
                     activity?.runOnUiThread {
-                        Toast.makeText(context, "胸腰扣设备只能选择一个", Toast.LENGTH_SHORT).show()
+                        if (isAdded) Toast.makeText(context, "胸腰扣设备只能选择一个", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
             else -> activity?.runOnUiThread {
-                Toast.makeText(context, "未知设备类型: ${device.bestName}", Toast.LENGTH_SHORT).show()
+                if (isAdded) Toast.makeText(context, "未知设备类型: ${device.bestName}", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -178,7 +209,6 @@ class DetectionFragment : Fragment() {
 
         if (wasAdded) {
             scannedDevicesMap.remove(device.device.address)
-            // DO NOT remove from deviceLastSeen, as this timestamp is needed to prevent it from being immediately removed.
             updateScanResultsUI()
         }
 
@@ -207,6 +237,7 @@ class DetectionFragment : Fragment() {
     }
 
     private fun updateAllStatusLists() {
+        if (!isAdded || _binding == null) return
         updateHbsList()
         updateWgdList()
         updateXykList()
@@ -254,7 +285,6 @@ class DetectionFragment : Fragment() {
 
         xykRemoveButton.setOnClickListener { handleRemoveFromXyk() }
 
-        // --- Modified Button Logic ---
         binding.scanButton.text = "确定"
         binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.darkblue)
         binding.scanButton.setOnClickListener { stopBleScan(navigateToMonitoring = true) }
@@ -392,13 +422,13 @@ class DetectionFragment : Fragment() {
                 override fun onError(e: Throwable) {
                     Log.e("DetectionFragment", "Failed to save device ${device.bestName}", e)
                     activity?.runOnUiThread {
-                        Toast.makeText(context, "保存设备 ${device.bestName} 失败", Toast.LENGTH_SHORT).show()
+                        if (isAdded) Toast.makeText(context, "保存设备 ${device.bestName} 失败", Toast.LENGTH_SHORT).show()
                     }
                 }
                 override fun onComplete() {}
             })
         }
-        Toast.makeText(context, "设备保存任务已启动", Toast.LENGTH_SHORT).show()
+        if (isAdded) Toast.makeText(context, "设备保存任务已启动", Toast.LENGTH_SHORT).show()
     }
 
     private val bleScanCallback = object : ScanCallback() {
@@ -412,7 +442,7 @@ class DetectionFragment : Fragment() {
 
         override fun onScanFailed(errorCode: Int) {
             activity?.runOnUiThread {
-                Toast.makeText(requireContext(), "蓝牙扫描失败，错误码: $errorCode", Toast.LENGTH_LONG).show()
+                if (isAdded) Toast.makeText(requireContext(), "蓝牙扫描失败，错误码: $errorCode", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -422,25 +452,18 @@ class DetectionFragment : Fragment() {
         val deviceName = result.scanRecord?.deviceName
         val rssi = result.rssi
 
-        Log.d("DetectionFragment", "Device Found: Name='${deviceName ?: "null"}', Address='$deviceAddress'")
-
         if (deviceName.isNullOrEmpty() || !deviceName.contains("Sensor", ignoreCase = true)) {
             return
         }
 
-        // Always update the last seen timestamp for any relevant device that is found.
         deviceLastSeen[deviceAddress] = System.currentTimeMillis()
 
-        // Check if the device is already in one of the selected lists.
         val isAlreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
                                 wgdDevices.any { it.device.address == deviceAddress } ||
                                 xykDevices.any { it.device.address == deviceAddress }
 
         if (isAlreadySelected) {
-            // If it's selected, it should not be in the scan list. Remove if present and ignore.
-            if (scannedDevicesMap.containsKey(deviceAddress)) {
-                scannedDevicesMap.remove(deviceAddress)
-            }
+            scannedDevicesMap.remove(deviceAddress)
             return
         }
 
@@ -449,17 +472,17 @@ class DetectionFragment : Fragment() {
             if (rssi > existingDevice.rssi) {
                 existingDevice.rssi = rssi
             }
-            // deviceLastSeen is already updated above.
         } else {
             scannedDevicesMap[deviceAddress] = DeviceScanResult(result.device, rssi, deviceName)
-            // deviceLastSeen is already updated above.
         }
     }
 
     private fun updateScanResultsUI() {
+        if (!isAdded || _binding == null) {
+            return
+        }
         val currentTime = System.currentTimeMillis()
 
-        // Remove stale devices from the scan list
         scannedDevicesMap.entries.removeIf { (address, _) ->
             (currentTime - (deviceLastSeen[address] ?: currentTime)) > 5000
         }
@@ -467,10 +490,9 @@ class DetectionFragment : Fragment() {
         val sortedList = scannedDevicesMap.values.sortedByDescending { it.rssi }
         scanAdapter.updateList(sortedList)
 
-        // Check selected lists for stale devices and remove them
         var listChanged = false
         val staleDevicePredicate: (DeviceScanResult) -> Boolean = {
-            (currentTime - (deviceLastSeen[it.device.address] ?: 0)) > 5000 // 5-second timeout
+            (currentTime - (deviceLastSeen[it.device.address] ?: 0)) > 5000
         }
 
         if (hbsDevices.removeIf(staleDevicePredicate)) listChanged = true
@@ -479,6 +501,7 @@ class DetectionFragment : Fragment() {
 
         if (listChanged) {
             activity?.runOnUiThread {
+                if (!isAdded || _binding == null) return@runOnUiThread
                 updateAllStatusLists()
                 saveDeviceLists()
                 Toast.makeText(context, "已自动移除离线设备", Toast.LENGTH_SHORT).show()

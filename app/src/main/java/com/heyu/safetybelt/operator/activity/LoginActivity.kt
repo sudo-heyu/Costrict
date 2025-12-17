@@ -1,5 +1,6 @@
 package com.heyu.safetybelt.operator.activity
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.text.Editable
@@ -28,6 +29,10 @@ class LoginActivity : AppCompatActivity() {
     private lateinit var loadingIndicator: ProgressBar
     private val tag = "LoginActivity"
     private val disposables = CompositeDisposable()
+
+    companion object {
+        var isNewLoginSession = false
+    }
 
     private val textWatcher = object : TextWatcher {
         override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -80,15 +85,12 @@ class LoginActivity : AppCompatActivity() {
             }
 
             override fun onNext(user: LCUser) {
-                // No need to check for isFinishing here, as we are navigating away.
                 Log.d(tag, "Anonymous login success. User ID: " + user.objectId)
                 findOrCreateWorker(name, employeeId, user)
             }
 
             override fun onError(e: Throwable) {
-                if (isFinishing || isDestroyed) {
-                    return
-                }
+                if (isFinishing || isDestroyed) return
                 showLoading(false)
                 Log.e(tag, "Anonymous login failed", e)
                 Toast.makeText(this@LoginActivity, "登录失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -108,9 +110,7 @@ class LoginActivity : AppCompatActivity() {
             }
 
             override fun onNext(workers: List<LCObject>) {
-                 if (isFinishing || isDestroyed) {
-                    return
-                }
+                 if (isFinishing || isDestroyed) return
                 if (workers.isNotEmpty()) {
                     val existingWorker = workers[0]
                     Log.d(tag, "Found existing worker. ObjectId: ${existingWorker.objectId}")
@@ -127,17 +127,13 @@ class LoginActivity : AppCompatActivity() {
                         }
 
                         override fun onNext(savedWorker: LCObject) {
-                            if (isFinishing || isDestroyed) {
-                                return
-                            }
+                            if (isFinishing || isDestroyed) return
                             Log.d(tag, "New worker saved successfully. ObjectId: ${savedWorker.objectId}")
                             navigateToMainOperator(name, employeeId, savedWorker.objectId)
                         }
 
                         override fun onError(e: Throwable) {
-                            if (isFinishing || isDestroyed) {
-                                return
-                            }
+                            if (isFinishing || isDestroyed) return
                             showLoading(false)
                             Log.e(tag, "Failed to save new worker", e)
                             Toast.makeText(this@LoginActivity, "创建新用户失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -149,9 +145,7 @@ class LoginActivity : AppCompatActivity() {
             }
 
             override fun onError(e: Throwable) {
-                if (isFinishing || isDestroyed) {
-                    return
-                }
+                if (isFinishing || isDestroyed) return
                 showLoading(false)
                 Log.e(tag, "Failed to find worker", e)
                 Toast.makeText(this@LoginActivity, "查找用户失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -162,6 +156,7 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun navigateToMainOperator(name: String, employeeId: String, workerObjectId: String) {
+        isNewLoginSession = true // Set the static flag
         val intent = Intent(this, MainActivityOperator::class.java).apply {
             putExtra("workerName", name)
             putExtra("employeeId", employeeId)
