@@ -128,21 +128,43 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             ACTION_CONNECT_DEVICES -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
                 val newSessionId = intent.getStringExtra(EXTRA_SESSION_ID)
-                
-                if (newSessionId != null) {
+
+                if (newSessionId != null && newSessionId != currentSessionId) {
                     currentSessionId = newSessionId
                     startLiveQuery(newSessionId)
+                    cleanupConnectionsAndState(clearSession = false) // Don't clear session ID here
+                    updateWorkSession(isOnline = true)
+                } else if (currentSessionId == null) {
+                     Log.e(TAG, "Attempted to connect without a session ID.")
                 }
-                
-                cleanupConnectionsAndState()
-                updateWorkSession(isOnline = true)
+
                 devices?.forEach { device ->
-                    deviceStates[device.deviceAddress] = DeviceState(device)
-                    connectWithTimeout(device.deviceAddress)
+                     if (!deviceStates.containsKey(device.deviceAddress)) {
+                        deviceStates[device.deviceAddress] = DeviceState(device)
+                        connectWithTimeout(device.deviceAddress)
+                    }
                 }
             }
             ACTION_DISCONNECT_ALL -> {
                 disconnectAllDevices(true)
+            }
+            ACTION_CONNECT_SPECIFIC -> {
+                val devicesToConnect = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
+                devicesToConnect?.forEach { device ->
+                    if (!deviceStates.containsKey(device.deviceAddress)) {
+                        Log.d(TAG, "Connecting specific device: ${device.deviceAddress}")
+                        deviceStates[device.deviceAddress] = DeviceState(device)
+                        connectWithTimeout(device.deviceAddress)
+                    }
+                }
+            }
+            ACTION_DISCONNECT_SPECIFIC -> {
+                val addressesToDisconnect = intent.getStringArrayListExtra(EXTRA_DEVICES_TO_DISCONNECT)
+                addressesToDisconnect?.forEach { address ->
+                    Log.d(TAG, "Disconnecting specific device: $address")
+                    disconnectSpecificDevice(address, true)
+                }
+                evaluateOverallStatus()
             }
             ACTION_RETRY_CONNECTION -> {
                 val addressToRetry = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
@@ -255,20 +277,36 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     // --- Connection Management ---
 
-    private fun cleanupConnectionsAndState() {
+    private fun cleanupConnectionsAndState(clearSession: Boolean) {
         mainHandler.removeCallbacksAndMessages(null)
         reconnectHandler.removeCallbacksAndMessages(null)
         deviceStates.values.forEach { state ->
             state.gatt?.close()
+            broadcastConnectionState(state.device.deviceAddress, false) // Broadcast disconnection
             state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
         }
         deviceStates.clear()
         stopAlarmCycle()
+        if(clearSession) {
+            currentSessionId = null
+        }
+    }
+    private fun disconnectSpecificDevice(address: String, notifyUi: Boolean) {
+        val state = deviceStates.remove(address)
+        if (state != null) {
+            state.gatt?.disconnect()
+            state.gatt?.close()
+            Log.d(TAG, "Disconnected specific device: $address")
+            broadcastConnectionState(address, false) // Broadcast disconnection
+            if (notifyUi) {
+                broadcastStatus(address, "已移除", "GRAY", false)
+            }
+        }
     }
 
     private fun disconnectAllDevices(isManual: Boolean) {
         val addresses = deviceStates.keys.toList()
-        cleanupConnectionsAndState()
+        cleanupConnectionsAndState(true)
         stopLiveQuery() // Also stop LiveQuery when disconnecting
 
         if (isManual) {
@@ -297,6 +335,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 state.connectionStatus = ConnectionStatus.TIMEOUT
                 state.gatt?.close()
                 broadcastStatus(address, "超时", "YELLOW", true)
+                broadcastConnectionState(address, false) // Broadcast disconnection
                 scheduleReconnect(address)
             }
         }
@@ -304,11 +343,17 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun scheduleReconnect(address: String) {
-        val state = deviceStates[address] ?: return
+        val state = deviceStates[address]
+        if (state == null) { // Hot-plug check
+            Log.d(TAG, "Reconnect cancelled for $address as it has been removed.")
+            return
+        }
+
         if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             Log.w(TAG, "Max reconnect attempts reached for $address. Stopping.")
             broadcastStatus(address, "重连失败", "YELLOW", true)
             state.connectionStatus = ConnectionStatus.FAILED
+            broadcastConnectionState(address, false) // Broadcast disconnection
             checkAllDevicesDisconnected()
             return
         }
@@ -322,13 +367,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun checkAllDevicesDisconnected() {
-        val allDisconnected = deviceStates.values.all {
-            it.connectionStatus == ConnectionStatus.DISCONNECTED || it.connectionStatus == ConnectionStatus.FAILED
-        }
-        if (allDisconnected) {
-            Log.d(TAG, "All devices are disconnected. Ending work session.")
-            updateWorkSession(isOnline = false, status = "设备离线", shouldEndSession = true)
-        }
+        if (deviceStates.isNotEmpty()) return
+
+        Log.d(TAG, "All devices are disconnected. Ending work session.")
+        updateWorkSession(isOnline = false, status = "设备离线", shouldEndSession = true)
+        stopLiveQuery()
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -346,21 +389,22 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     Log.d(TAG, "Successfully connected to $address")
                     state.connectionStatus = ConnectionStatus.CONNECTED
+                    broadcastConnectionState(address, true) // Broadcast connection
                     state.reconnectAttempts = 0
                     mainHandler.post { state.gatt?.discoverServices() }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    handleDisconnection(address, "已断开", "GRAY")
+                    handleDisconnection(address, "已断开", "GRAY", fromUser = false)
                 }
             } else {
                 Log.e(TAG, "GATT Error for $address. Status: $status")
-                handleDisconnection(address, "连接失败", "RED")
+                handleDisconnection(address, "连接失败", "RED", fromUser = false)
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val state = deviceStates[gatt.device.address]
             if (status != BluetoothGatt.GATT_SUCCESS || state == null) {
-                handleDisconnection(gatt.device.address, "服务发现失败", "RED")
+                handleDisconnection(gatt.device.address, "服务发现失败", "RED", fromUser = false)
                 return
             }
             state.subscriptionQueue.clear()
@@ -374,7 +418,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 processNextSubscription(gatt.device.address)
             } else {
                 Log.w(TAG, "Descriptor write failed for ${gatt.device.address}")
-                handleDisconnection(gatt.device.address, "订阅失败", "RED")
+                handleDisconnection(gatt.device.address, "订阅失败", "RED", fromUser = false)
             }
         }
 
@@ -403,15 +447,18 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun handleDisconnection(address: String, statusText: String, color: String) {
+    private fun handleDisconnection(address: String, statusText: String, color: String, fromUser: Boolean) {
         val state = deviceStates[address]
         state?.gatt?.close()
         if (state != null) {
             state.connectionStatus = ConnectionStatus.DISCONNECTED
+            broadcastConnectionState(address, false) // Broadcast disconnection
             state.sensorStatus = SensorStatus.UNKNOWN
             broadcastStatus(address, statusText, color, false)
             evaluateOverallStatus()
-            scheduleReconnect(address)
+            if (!fromUser) { // Only reconnect if it was not a user-initiated disconnect
+                 scheduleReconnect(address)
+            }
         }
     }
 
@@ -441,13 +488,18 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         val abnormalHookSensorTypes = activeStates.filter { it.isAbnormalSignal && it.sensorType != 5 }.mapNotNull { it.sensorType?.minus(1) }.toSet()
         val isSingleHookState = SINGLE_HOOK_COMBINATIONS.contains(abnormalHookSensorTypes)
 
-        activeStates.forEach { state ->
+        deviceStates.values.forEach { state -> // Iterate over all states
             val previousStatus = state.sensorStatus
-            state.sensorStatus = when {
-                !state.isAbnormalSignal -> SensorStatus.NORMAL
-                state.sensorType == 5 -> SensorStatus.ALARM
-                isSingleHookState -> if (state.singleHookTimerExpired) SensorStatus.ALARM else SensorStatus.SINGLE_HOOK
-                else -> SensorStatus.ALARM
+            
+            if (state.connectionStatus != ConnectionStatus.CONNECTED) {
+                state.sensorStatus = SensorStatus.UNKNOWN
+            } else {
+                 state.sensorStatus = when {
+                    !state.isAbnormalSignal -> SensorStatus.NORMAL
+                    state.sensorType == 5 -> SensorStatus.ALARM
+                    isSingleHookState -> if (state.singleHookTimerExpired) SensorStatus.ALARM else SensorStatus.SINGLE_HOOK
+                    else -> SensorStatus.ALARM
+                }
             }
 
             if (previousStatus != state.sensorStatus) {
@@ -476,6 +528,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         val overallStatusString = when {
             partStatuses.any { it == SensorStatus.ALARM } -> "异常"
             partStatuses.any { it == SensorStatus.SINGLE_HOOK } -> "单挂"
+            deviceStates.isEmpty() -> "已断开"
             else -> "正常"
         }
 
@@ -558,18 +611,23 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         val shouldStartNow = !isAlarmLoopRunning && newAlarmMessages.isNotEmpty()
 
         synchronized(alarmMessageQueue) {
+            val hadAlarmsBefore = alarmMessageQueue.isNotEmpty()
             alarmMessageQueue.clear()
             alarmMessageQueue.addAll(newAlarmMessages)
             isAlarmLoopRunning = alarmMessageQueue.isNotEmpty()
+
+            // If we just added the first alarm, show the dialog
+            if (!hadAlarmsBefore && isAlarmLoopRunning) {
+                 val intent = Intent(ACTION_SHOW_ALARM_DIALOG).apply {
+                    putStringArrayListExtra(EXTRA_ALARM_MESSAGES, ArrayList(newAlarmMessages))
+                }
+                LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+            }
         }
 
         if (shouldStartNow) {
             currentAlarmIndex = 0
             playNextAlarmInQueue()
-            val intent = Intent(ACTION_SHOW_ALARM_DIALOG).apply {
-                putStringArrayListExtra(EXTRA_ALARM_MESSAGES, ArrayList(newAlarmMessages))
-            }
-            LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
         } else if (!isAlarmLoopRunning) {
             stopAlarmCycle()
         }
@@ -682,12 +740,20 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     private fun broadcastHeartbeat(deviceAddress: String, info: HeartbeatInfo) {
         val intent = Intent(ACTION_HEARTBEAT_UPDATE).apply {
-            putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
             putExtra(EXTRA_SENSOR_ID, info.sensorIdHex)
             putExtra(EXTRA_BATTERY, info.batteryStatus)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
+
+    private fun broadcastConnectionState(address: String, isConnected: Boolean) {
+        val intent = Intent(ACTION_CONNECTION_STATE_UPDATE).apply {
+            putExtra(EXTRA_DEVICE_ADDRESS, address)
+            putExtra(EXTRA_IS_CONNECTED, isConnected)
+        }
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+    }
+
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -708,11 +774,17 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_DISCONNECT_ALL = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_ALL"
         const val ACTION_RETRY_CONNECTION = "com.heyu.safetybeltoperators.ACTION_RETRY_CONNECTION"
         const val ACTION_MUTE_ALARMS = "com.heyu.safetybeltoperators.ACTION_MUTE_ALARMS"
-        const val ACTION_RESET_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_RESET_ADMIN_ALERT" // New Action
-        const val ACTION_SHOW_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_SHOW_ADMIN_ALERT" // New Action
+        const val ACTION_RESET_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_RESET_ADMIN_ALERT"
+        const val ACTION_SHOW_ADMIN_ALERT = "com.heyu.safetybeltoperators.ACTION_SHOW_ADMIN_ALERT"
+        const val ACTION_CONNECT_SPECIFIC = "com.heyu.safetybeltoperators.ACTION_CONNECT_SPECIFIC"
+        const val ACTION_DISCONNECT_SPECIFIC = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_SPECIFIC"
+        const val ACTION_CONNECTION_STATE_UPDATE = "com.heyu.safetybeltoperators.ACTION_CONNECTION_STATE_UPDATE"
+
 
         const val EXTRA_DEVICES = "com.heyu.safetybeltoperators.EXTRA_DEVICES"
+        const val EXTRA_DEVICES_TO_DISCONNECT = "com.heyu.safetybeltoperators.EXTRA_DEVICES_TO_DISCONNECT"
         const val EXTRA_SESSION_ID = "com.heyu.safetybeltoperators.EXTRA_SESSION_ID"
+        const val EXTRA_IS_CONNECTED = "com.heyu.safetybeltoperators.EXTRA_IS_CONNECTED"
 
         const val ACTION_STATUS_UPDATE = "com.heyu.safetybeltoperators.ACTION_STATUS_UPDATE"
         const val ACTION_HEARTBEAT_UPDATE = "com.heyu.safetybeltoperators.ACTION_HEARTBEAT_UPDATE"

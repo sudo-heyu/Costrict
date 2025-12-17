@@ -7,8 +7,10 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.os.Build
@@ -24,6 +26,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import cn.leancloud.LCObject
 import com.google.gson.Gson
@@ -34,6 +37,7 @@ import com.heyu.safetybelt.operator.adapter.StatusDeviceAdapter
 import com.heyu.safetybelt.operator.model.DeviceScanResult
 import com.heyu.safetybelt.common.Device
 import com.heyu.safetybelt.databinding.FragmentDetectionBinding
+import com.heyu.safetybelt.operator.service.BleService
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Observable
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -42,6 +46,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
 class DetectionFragment : Fragment() {
+
+    // Safe storage class that does not contain unstable system objects.
+    private data class SavedDeviceInfo(val address: String, val name: String)
 
     private var _binding: FragmentDetectionBinding? = null
     private val binding get() = _binding!!
@@ -78,6 +85,7 @@ class DetectionFragment : Fragment() {
 
     private val scannedDevicesMap = ConcurrentHashMap<String, DeviceScanResult>()
     private val deviceLastSeen = ConcurrentHashMap<String, Long>()
+    private val connectedDeviceAddresses = ConcurrentHashMap.newKeySet<String>()
     private val rx3CompositeDisposable = CompositeDisposable()
     private val rx2CompositeDisposable = io.reactivex.disposables.CompositeDisposable()
 
@@ -91,6 +99,29 @@ class DetectionFragment : Fragment() {
     private lateinit var wgdTitleTextView: TextView
 
     private var isScanning = false
+    private val MONITORING_FRAGMENT_TAG = "monitoring_fragment"
+
+    private val connectionStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == BleService.ACTION_CONNECTION_STATE_UPDATE) {
+                val address = intent.getStringExtra(BleService.EXTRA_DEVICE_ADDRESS)
+                val isConnected = intent.getBooleanExtra(BleService.EXTRA_IS_CONNECTED, false)
+                if (address != null) {
+                    if (isConnected) {
+                        connectedDeviceAddresses.add(address)
+                    } else {
+                        connectedDeviceAddresses.remove(address)
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val filter = IntentFilter(BleService.ACTION_CONNECTION_STATE_UPDATE)
+        LocalBroadcastManager.getInstance(requireContext()).registerReceiver(connectionStateReceiver, filter)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater, container: ViewGroup?,
@@ -110,17 +141,11 @@ class DetectionFragment : Fragment() {
             return
         }
 
-        // --- The Core of the Final Fix ---
         if (currentWorkerId != newWorkerId) {
             Log.d("DetectionFragment", "New user detected. Old: $currentWorkerId, New: $newWorkerId. Resetting state.")
-            // This is a new session or user switch. Reset everything.
             currentWorkerId = newWorkerId
             sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
-            
-            // 1. Clear disk cache for the new user SYNCHRONOUSLY.
             sharedPreferences.edit().clear().commit()
-            
-            // 2. Clear in-memory lists.
             hbsDevices.clear()
             wgdDevices.clear()
             xykDevices.clear()
@@ -129,15 +154,19 @@ class DetectionFragment : Fragment() {
         }
 
         setupUI()
-        loadDeviceLists() // Now this will load into a clean slate on new login.
+        loadDeviceLists()
         updateAllStatusLists()
-
         checkAndRequestPermissions()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(connectionStateReceiver)
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
-        stopBleScan() // Only stop scanning, do not clear data
+        stopBleScan()
         rx3CompositeDisposable.clear()
         rx2CompositeDisposable.clear()
         _binding = null
@@ -145,30 +174,54 @@ class DetectionFragment : Fragment() {
 
     private fun saveDeviceLists() {
         if (!::sharedPreferences.isInitialized) return
+        
+        fun deviceListToInfoList(list: List<DeviceScanResult>): List<SavedDeviceInfo> {
+            return list.map { SavedDeviceInfo(it.device.address, it.bestName) }
+        }
+
         with(sharedPreferences.edit()) {
-            putString("hbs_devices", gson.toJson(hbsDevices))
-            putString("wgd_devices", gson.toJson(wgdDevices))
-            putString("xyk_devices", gson.toJson(xykDevices))
+            putString("hbs_devices", gson.toJson(deviceListToInfoList(hbsDevices)))
+            putString("wgd_devices", gson.toJson(deviceListToInfoList(wgdDevices)))
+            putString("xyk_devices", gson.toJson(deviceListToInfoList(xykDevices)))
             apply()
         }
     }
 
     private fun loadDeviceLists() {
-        // This function now correctly loads data into a clean or preserved state.
+        val adapter = bluetoothAdapter
+        if (adapter == null) {
+            Log.e("DetectionFragment", "Bluetooth adapter is null, cannot load devices.")
+            return
+        }
         if (!::sharedPreferences.isInitialized) {
-             if(currentWorkerId != null) { // Defensive check
+             if(currentWorkerId != null) {
                  sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
              } else { 
-                 return // Should not happen due to the check in onViewCreated
+                 return
              }
         }
-        val type = object : TypeToken<CopyOnWriteArrayList<DeviceScanResult>>() {}.type
-        sharedPreferences.getString("hbs_devices", null)?.let { hbsDevices = gson.fromJson(it, type) }
-        sharedPreferences.getString("wgd_devices", null)?.let { wgdDevices = gson.fromJson(it, type) }
-        sharedPreferences.getString("xyk_devices", null)?.let { xykDevices = gson.fromJson(it, type) }
+
+        val type = object : TypeToken<List<SavedDeviceInfo>>() {}.type
+
+        fun infoListToDeviceList(json: String?): CopyOnWriteArrayList<DeviceScanResult> {
+            val savedList: List<SavedDeviceInfo> = gson.fromJson(json, type) ?: return CopyOnWriteArrayList()
+            val deviceList = savedList.mapNotNull { info ->
+                try {
+                    val device = adapter.getRemoteDevice(info.address)
+                    DeviceScanResult(device, -100, info.name) // Use a default RSSI as it's not relevant here
+                } catch (e: IllegalArgumentException) {
+                    Log.e("DetectionFragment", "Invalid Bluetooth address loaded from preferences: ${info.address}", e)
+                    null
+                }
+            }
+            return CopyOnWriteArrayList(deviceList)
+        }
+        
+        hbsDevices = infoListToDeviceList(sharedPreferences.getString("hbs_devices", null))
+        wgdDevices = infoListToDeviceList(sharedPreferences.getString("wgd_devices", null))
+        xykDevices = infoListToDeviceList(sharedPreferences.getString("xyk_devices", null))
     }
 
-    // ... (The rest of the file remains the same) ...
     private fun addDeviceToCategory(device: DeviceScanResult) {
         val deviceAddress = device.device.address
         val alreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
@@ -181,10 +234,6 @@ class DetectionFragment : Fragment() {
             }
             return
         }
-
-        val previousHbsCount = hbsDevices.size
-        val previousWgdCount = wgdDevices.size
-        val previousXykCount = xykDevices.size
 
         when (getSensorTypeFromDeviceName(device.bestName)) {
             1, 2, 6 -> hbsDevices.add(device)
@@ -202,16 +251,8 @@ class DetectionFragment : Fragment() {
                 if (isAdded) Toast.makeText(context, "未知设备类型: ${device.bestName}", Toast.LENGTH_SHORT).show()
             }
         }
-
-        val wasAdded = hbsDevices.size > previousHbsCount ||
-                wgdDevices.size > previousWgdCount ||
-                xykDevices.size > previousXykCount
-
-        if (wasAdded) {
-            scannedDevicesMap.remove(device.device.address)
-            updateScanResultsUI()
-        }
-
+        scannedDevicesMap.remove(device.device.address)
+        updateScanResultsUI()
         updateAllStatusLists()
         saveDeviceLists()
     }
@@ -287,8 +328,48 @@ class DetectionFragment : Fragment() {
 
         binding.scanButton.text = "确定"
         binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.darkblue)
-        binding.scanButton.setOnClickListener { stopBleScan(navigateToMonitoring = true) }
+        binding.scanButton.setOnClickListener { navigateOrUpdateMonitoring() }
     }
+
+    private fun navigateOrUpdateMonitoring() {
+        stopBleScan()
+        saveDeviceLists() // Now safe to call
+
+        val monitoringFragment = parentFragmentManager.findFragmentByTag(MONITORING_FRAGMENT_TAG) as? MonitoringFragment
+
+        val allSelectedDevices = ArrayList<DeviceScanResult>().apply {
+            addAll(hbsDevices)
+            addAll(wgdDevices)
+            addAll(xykDevices)
+        }
+
+        if (allSelectedDevices.isEmpty()) {
+            Toast.makeText(requireContext(), "请至少选择一个设备", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        if (monitoringFragment == null || !monitoringFragment.isAdded) {
+            // Case 1: MonitoringFragment doesn't exist, create it.
+            Log.d("DetectionFragment", "Creating new MonitoringFragment.")
+            val newMonitoringFragment = MonitoringFragment().apply {
+                arguments = Bundle().apply {
+                    putParcelableArrayList("hbs_devices", ArrayList(hbsDevices))
+                    putParcelableArrayList("wgd_devices", ArrayList(wgdDevices))
+                    putParcelableArrayList("xyk_devices", ArrayList(xykDevices))
+                }
+            }
+            parentFragmentManager.beginTransaction()
+                .replace(R.id.safetybelt_fragment_container, newMonitoringFragment, MONITORING_FRAGMENT_TAG)
+                .addToBackStack(MONITORING_FRAGMENT_TAG)
+                .commit()
+        } else {
+            // Case 2: It exists, update it and pop back stack to show it.
+            Log.d("DetectionFragment", "Updating existing MonitoringFragment.")
+            monitoringFragment.updateDevices(allSelectedDevices)
+            parentFragmentManager.popBackStack()
+        }
+    }
+
 
     private fun checkAndRequestPermissions() {
         val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -362,7 +443,7 @@ class DetectionFragment : Fragment() {
             isScanning = true
             bleScanner?.startScan(null, scanSettings, bleScanCallback)
 
-            val scanUpdateDisposable = Observable.interval(5, 5, TimeUnit.SECONDS)
+            val scanUpdateDisposable = Observable.interval(2, 2, TimeUnit.SECONDS)
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe { updateScanResultsUI() }
             rx3CompositeDisposable.add(scanUpdateDisposable)
@@ -370,26 +451,11 @@ class DetectionFragment : Fragment() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun stopBleScan(navigateToMonitoring: Boolean = false) {
+    private fun stopBleScan() {
         if (isScanning) {
             bleScanner?.stopScan(bleScanCallback)
             isScanning = false
             rx3CompositeDisposable.clear()
-        }
-
-        if (navigateToMonitoring) {
-            saveDevicesToCloud()
-            val monitoringFragment = MonitoringFragment()
-            val bundle = Bundle()
-            bundle.putParcelableArrayList("hbs_devices", ArrayList(hbsDevices))
-            bundle.putParcelableArrayList("wgd_devices", ArrayList(wgdDevices))
-            bundle.putParcelableArrayList("xyk_devices", ArrayList(xykDevices))
-            monitoringFragment.arguments = bundle
-
-            parentFragmentManager.beginTransaction()
-                .replace(R.id.safetybelt_fragment_container, monitoringFragment)
-                .addToBackStack(null)
-                .commit()
         }
     }
 
@@ -421,14 +487,10 @@ class DetectionFragment : Fragment() {
                 }
                 override fun onError(e: Throwable) {
                     Log.e("DetectionFragment", "Failed to save device ${device.bestName}", e)
-                    activity?.runOnUiThread {
-                        if (isAdded) Toast.makeText(context, "保存设备 ${device.bestName} 失败", Toast.LENGTH_SHORT).show()
-                    }
                 }
                 override fun onComplete() {}
             })
         }
-        if (isAdded) Toast.makeText(context, "设备保存任务已启动", Toast.LENGTH_SHORT).show()
     }
 
     private val bleScanCallback = object : ScanCallback() {
@@ -491,8 +553,10 @@ class DetectionFragment : Fragment() {
         scanAdapter.updateList(sortedList)
 
         var listChanged = false
-        val staleDevicePredicate: (DeviceScanResult) -> Boolean = {
-            (currentTime - (deviceLastSeen[it.device.address] ?: 0)) > 5000
+        val staleDevicePredicate: (DeviceScanResult) -> Boolean = { device ->
+            val notSeenRecently = (currentTime - (deviceLastSeen[device.device.address] ?: 0)) > 5000
+            val notConnected = !connectedDeviceAddresses.contains(device.device.address)
+            notSeenRecently && notConnected
         }
 
         if (hbsDevices.removeIf(staleDevicePredicate)) listChanged = true
@@ -501,10 +565,11 @@ class DetectionFragment : Fragment() {
 
         if (listChanged) {
             activity?.runOnUiThread {
-                if (!isAdded || _binding == null) return@runOnUiThread
-                updateAllStatusLists()
-                saveDeviceLists()
-                Toast.makeText(context, "已自动移除离线设备", Toast.LENGTH_SHORT).show()
+                if (isAdded) {
+                    updateAllStatusLists()
+                    saveDeviceLists()
+                    Toast.makeText(context, "已自动移除离线或失联的设备", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }

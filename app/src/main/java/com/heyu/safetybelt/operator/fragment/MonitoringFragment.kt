@@ -45,7 +45,7 @@ class MonitoringFragment : Fragment() {
     private var _binding: FragmentMonitoringWorkerBinding? = null
     private val binding get() = _binding!!
 
-    private val configuredDevices = mutableMapOf<Int, MutableList<DeviceScanResult>>()
+    private val configuredDevices = ConcurrentHashMap<String, DeviceScanResult>()
     private val viewHolders = mutableMapOf<Int, DeviceViewHolder>()
     private val addressToTypeAndSlotMap = mutableMapOf<String, Pair<Int, Int>>()
 
@@ -66,7 +66,7 @@ class MonitoringFragment : Fragment() {
 
     private val serviceReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent == null) return
+            if (intent == null || !isAdded) return
 
             when (intent.action) {
                 BleService.ACTION_SHOW_ADMIN_ALERT -> {
@@ -115,17 +115,11 @@ class MonitoringFragment : Fragment() {
                         if (statusText == "异常") {
                             if (alarmingDevices.add(address)) {
                                 currentSessionAlarmCount++
-                                if (context != null) {
-                                    val sensorName = SENSOR_TYPES[sensorType] ?: "未知传感器"
-                                    WorkRecordManager.addAlarmDetail(context, sensorName, statusText)
-                                }
+                                WorkRecordManager.addAlarmDetail(requireContext(), SENSOR_TYPES[sensorType] ?: "未知传感器", statusText)
                             }
                         } else {
                             if (alarmingDevices.remove(address)) {
-                                if (context != null) {
-                                    val sensorName = SENSOR_TYPES[sensorType] ?: "未知传感器"
-                                    WorkRecordManager.endAlarmForSensor(context, sensorName)
-                                }
+                                WorkRecordManager.endAlarmForSensor(requireContext(), SENSOR_TYPES[sensorType] ?: "未知传感器")
                             }
                         }
                     } else { // ACTION_HEARTBEAT_UPDATE
@@ -134,9 +128,7 @@ class MonitoringFragment : Fragment() {
                         updateHeartbeatView(sensorType, slotIndex, "$sensorId ($battery)")
                     }
 
-                    if (context != null) {
-                        WorkRecordManager.updateLastActiveTime(context)
-                    }
+                    WorkRecordManager.updateLastActiveTime(requireContext())
                 }
             }
         }
@@ -155,10 +147,11 @@ class MonitoringFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        setupDeviceList()
-        setupButtons()
+        if (savedInstanceState == null) { // Only setup on first creation
+            buildFullDeviceLayout()
+            setupButtons()
+        }
         binding.backButton.setOnClickListener {
-            // Just pop the back stack, don't end the session.
             parentFragmentManager.popBackStack()
         }
 
@@ -166,7 +159,7 @@ class MonitoringFragment : Fragment() {
             addAction(BleService.ACTION_STATUS_UPDATE)
             addAction(BleService.ACTION_HEARTBEAT_UPDATE)
             addAction(BleService.ACTION_SHOW_ALARM_DIALOG)
-            addAction(BleService.ACTION_SHOW_ADMIN_ALERT) // Register for Admin Alert
+            addAction(BleService.ACTION_SHOW_ADMIN_ALERT)
         }
         LocalBroadcastManager.getInstance(requireContext()).registerReceiver(serviceReceiver, filter)
     }
@@ -175,12 +168,63 @@ class MonitoringFragment : Fragment() {
         super.onDestroyView()
         LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(serviceReceiver)
         countdownHandler.removeCallbacksAndMessages(null)
-        
-        // The session is no longer ended here to allow navigating back and forth.
-        // Session is now only ended on manual disconnect or if all devices are lost.
-
+        // **MODIFICATION**: We NO LONGER disconnect here. The service keeps running.
+        // The session is only ended on manual disconnect or if all devices are lost.
         compositeDisposable.clear()
         _binding = null
+    }
+
+    // --- Core Hot-plug Logic ---
+    fun updateDevices(newDevices: List<DeviceScanResult>) {
+        if (!isAdded) return
+
+        val newDeviceMap = newDevices.associateBy { it.deviceAddress }
+        val oldDeviceMap = configuredDevices
+
+        val devicesToRemove = oldDeviceMap.keys.filter { it !in newDeviceMap.keys }
+        val devicesToAdd = newDeviceMap.filter { it.key !in oldDeviceMap.keys }.values.toList()
+
+        if (devicesToRemove.isNotEmpty()) {
+            Log.d(TAG, "Removing devices: $devicesToRemove")
+            val intent = Intent(requireContext(), BleService::class.java).apply {
+                action = BleService.ACTION_DISCONNECT_SPECIFIC
+                putStringArrayListExtra(BleService.EXTRA_DEVICES_TO_DISCONNECT, ArrayList(devicesToRemove))
+            }
+            requireContext().startService(intent)
+
+            // Update UI immediately for removed devices
+            devicesToRemove.forEach { address ->
+                configuredDevices.remove(address)
+                val typeAndSlot = addressToTypeAndSlotMap.remove(address)
+                if (typeAndSlot != null) {
+                    val (sensorType, _) = typeAndSlot
+                    updateDeviceRow(sensorType, null)
+                }
+            }
+        }
+
+        if (devicesToAdd.isNotEmpty()) {
+            Log.d(TAG, "Adding devices: ${devicesToAdd.map { it.deviceAddress }}")
+            val intent = Intent(requireContext(), BleService::class.java).apply {
+                action = BleService.ACTION_CONNECT_SPECIFIC
+                putParcelableArrayListExtra(BleService.EXTRA_DEVICES, ArrayList(devicesToAdd))
+            }
+            requireContext().startService(intent)
+
+            // Update UI for new devices
+            devicesToAdd.forEach { device ->
+                configuredDevices[device.deviceAddress] = device
+                val sensorType = getSensorTypeFromDeviceName(device.bestName)
+                if (sensorType != null) {
+                    addressToTypeAndSlotMap[device.deviceAddress] = sensorType to 0 // Assuming one device per type
+                    updateDeviceRow(sensorType, device)
+                }
+            }
+        }
+
+        if (devicesToAdd.isNotEmpty() || devicesToRemove.isNotEmpty()) {
+            Toast.makeText(requireContext(), "设备列表已更新", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun startCountdown(sensorType: Int, slotIndex: Int) {
@@ -210,29 +254,36 @@ class MonitoringFragment : Fragment() {
         countdownValues.remove(key)
     }
 
-    private fun setupDeviceList() {
+    private fun buildFullDeviceLayout() {
         val passedDevices = getAllDevicesFromArgs()
-        val deviceMap = passedDevices.groupBy { getSensorTypeFromDeviceName(it.bestName) }
+        if (passedDevices.isEmpty()) {
+            displayEmptyDeviceMessage()
+            return
+        }
+        val deviceMap = passedDevices.associateBy { it.deviceAddress }
+        configuredDevices.clear()
+        configuredDevices.putAll(deviceMap)
 
         binding.fixedColumnContainer.removeAllViews()
         binding.scrollableDataContainer.removeAllViews()
-        configuredDevices.clear()
         viewHolders.clear()
         addressToTypeAndSlotMap.clear()
 
         for (sensorType in 1..6) {
-            val devicesForType = deviceMap[sensorType]?.take(1)
-            if (!devicesForType.isNullOrEmpty()) {
-                configuredDevices[sensorType] = devicesForType.toMutableList()
-                devicesForType.forEachIndexed { index, device ->
-                    addressToTypeAndSlotMap[device.deviceAddress] = sensorType to index
-                }
+            // Find a device matching this sensor type from the initial list.
+            val deviceForType = configuredDevices.values.find { getSensorTypeFromDeviceName(it.bestName) == sensorType }
+
+            // Create a row for every possible sensor type.
+            addDeviceRow(sensorType, deviceForType)
+
+            // If a device was found, map its address for quick lookups.
+            if (deviceForType != null) {
+                addressToTypeAndSlotMap[deviceForType.deviceAddress] = sensorType to 0 // Assuming one device per type for now
             }
-            addDeviceRow(sensorType, devicesForType)
         }
     }
 
-    private fun addDeviceRow(sensorType: Int, devices: List<DeviceScanResult>?) {
+    private fun addDeviceRow(sensorType: Int, device: DeviceScanResult?) {
         val inflater = LayoutInflater.from(requireContext())
 
         val nameView = inflater.inflate(R.layout.list_item_monitoring_fixed, binding.fixedColumnContainer, false) as TextView
@@ -242,12 +293,21 @@ class MonitoringFragment : Fragment() {
         val rowView = inflater.inflate(R.layout.list_item_monitoring, binding.scrollableDataContainer, false)
         val btName1 = rowView.findViewById<TextView>(R.id.item_sensor_bt_name_1)
         val status1 = rowView.findViewById<TextView>(R.id.item_sensor_status_1)
-
         val slot1VH = SensorSlotViewHolder(btName1, status1)
 
-        val device1 = devices?.getOrNull(0)
-        if (device1 != null) {
-            slot1VH.btNameView.text = device1.bestName
+        binding.scrollableDataContainer.addView(rowView)
+        viewHolders[sensorType] = DeviceViewHolder(nameView, slot1VH)
+
+        // Update the content of the newly created row
+        updateDeviceRow(sensorType, device)
+    }
+
+    private fun updateDeviceRow(sensorType: Int, device: DeviceScanResult?) {
+        val vh = viewHolders[sensorType] ?: return
+        val slot1VH = vh.slot1
+
+        if (device != null) {
+            slot1VH.btNameView.text = device.bestName
             slot1VH.statusView.text = "待连接"
             slot1VH.statusView.setTextColor(Color.GRAY)
         } else {
@@ -255,13 +315,12 @@ class MonitoringFragment : Fragment() {
             slot1VH.statusView.text = "未配置"
             slot1VH.statusView.setTextColor(Color.LTGRAY)
         }
-
-        binding.scrollableDataContainer.addView(rowView)
-        viewHolders[sensorType] = DeviceViewHolder(nameView, slot1VH)
+        // Reset any visual state
+        updateStatusView(sensorType, 0, slot1VH.statusView.text.toString(), slot1VH.statusView.currentTextColor, false)
     }
 
     private fun setupButtons() {
-        if (configuredDevices.isEmpty()) {
+        if (configuredDevices.isEmpty() && getAllDevicesFromArgs().isEmpty()) {
             displayEmptyDeviceMessage()
             return
         }
@@ -272,7 +331,7 @@ class MonitoringFragment : Fragment() {
         val disconnectButtonDrawable = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.parseColor("#9E9E9E")); cornerRadius = 50f }
 
         startButton = Button(requireContext()).apply {
-            text = "开始连接"
+            text = "开始工作"
             background = startButtonDrawable
             setTextColor(Color.WHITE)
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER }
@@ -287,7 +346,7 @@ class MonitoringFragment : Fragment() {
                 startWorkSession(
                     onSessionStarted = { sessionId ->
                         currentSessionId = sessionId
-                        val allDevices = ArrayList(configuredDevices.values.flatten())
+                        val allDevices = ArrayList(configuredDevices.values)
                         val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
                             action = BleService.ACTION_CONNECT_DEVICES
                             putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allDevices)
@@ -298,10 +357,9 @@ class MonitoringFragment : Fragment() {
                         } else {
                             requireContext().startService(serviceIntent)
                         }
-                        configuredDevices.forEach { (type, deviceList) ->
-                            deviceList.forEachIndexed { index, _ ->
-                                updateStatusView(type, index, "连接中...", Color.BLUE, true)
-                            }
+                        configuredDevices.keys.forEach { address ->
+                            val (type, slot) = addressToTypeAndSlotMap[address]!!
+                            updateStatusView(type, slot, "连接中...", Color.BLUE, true)
                         }
                         Toast.makeText(requireContext(), "云端作业已启动，正在连接设备。", Toast.LENGTH_SHORT).show()
                     },
@@ -316,7 +374,7 @@ class MonitoringFragment : Fragment() {
         }
 
         disconnectButton = Button(requireContext()).apply {
-            text = "断开所有连接"
+            text = "结束工作"
             visibility = View.GONE
             background = disconnectButtonDrawable
             setTextColor(Color.WHITE)
@@ -335,7 +393,7 @@ class MonitoringFragment : Fragment() {
             return
         }
 
-        val deviceNameList = configuredDevices.values.flatten().map { it.bestName }
+        val deviceNameList = configuredDevices.values.map { it.bestName }
         val workSession = WorkSession().apply {
             put("worker", LCObject.createWithoutData("Worker", workerObjectId))
             startTime = Date()
@@ -355,17 +413,16 @@ class MonitoringFragment : Fragment() {
 
     private fun showDisconnectConfirmationDialog() {
         AlertDialog.Builder(requireContext())
-            .setTitle("断开连接")
+            .setTitle("结束工作")
             .setMessage("您确定要断开所有设备的连接吗？这将结束本次工作记录。")
             .setPositiveButton("确定") { _, _ ->
-                // ONLY send the intent. The service is responsible for ending the session.
                 val serviceIntent = Intent(requireContext(), BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
                 requireContext().startService(serviceIntent)
 
-                // Update local state and UI
                 WorkRecordManager.stopCurrentWork(requireContext(), currentSessionAlarmCount)
                 alarmingDevices.clear()
                 handleDisconnectUI()
+                parentFragmentManager.popBackStack() // Go back to detection screen
             }
             .setNegativeButton("取消", null)
             .show()
@@ -375,7 +432,7 @@ class MonitoringFragment : Fragment() {
         if (!isAdded || messages.isEmpty()) return
         isAlarmDialogShowing = true
 
-        val messageText = messages.joinToString("")
+        val messageText = messages.joinToString("\n")
 
         AlertDialog.Builder(requireContext())
             .setTitle("安全警报")
@@ -388,7 +445,6 @@ class MonitoringFragment : Fragment() {
             .show()
     }
 
-    // New Dialog for Remote Admin Alert
     private fun showAdminAlertDialog() {
         if (!isAdded || isAdminAlarmDialogShowing) return
         isAdminAlarmDialogShowing = true
@@ -397,9 +453,8 @@ class MonitoringFragment : Fragment() {
             .setTitle("远程警报")
             .setMessage("安监员向您发送了警报提醒，请立即检查安全带！")
             .setIcon(R.drawable.ic_dialog_warning)
-            .setCancelable(false) // Prevent dismissing by clicking outside
+            .setCancelable(false)
             .setPositiveButton("收到") { dialog, _ ->
-                // Send broadcast to Service to reset the alarm flag
                 val intent = Intent(BleService.ACTION_RESET_ADMIN_ALERT)
                 LocalBroadcastManager.getInstance(requireContext()).sendBroadcast(intent)
                 dialog.dismiss()
@@ -409,10 +464,9 @@ class MonitoringFragment : Fragment() {
     }
 
     private fun handleDisconnectUI() {
-        for ((sensorType, deviceList) in configuredDevices) {
-            deviceList.forEachIndexed { index, _ ->
-                updateStatusView(sensorType, index, "待连接", Color.GRAY, false)
-            }
+        configuredDevices.keys.forEach { address ->
+             val (type, slot) = addressToTypeAndSlotMap[address]!!
+             updateStatusView(type, slot, "待连接", Color.GRAY, false)
         }
         disconnectButton?.visibility = View.GONE
         startButton?.visibility = View.VISIBLE
@@ -422,13 +476,12 @@ class MonitoringFragment : Fragment() {
         if (!isAdded) return
         val slotViewHolder = viewHolders[sensorType]?.slot1 ?: return
 
-
         slotViewHolder.statusView.text = text
         slotViewHolder.statusView.setTextColor(color)
         slotViewHolder.statusView.setOnClickListener(null)
 
         var iconResId = 0
-        val device = configuredDevices[sensorType]?.getOrNull(slotIndex)
+        val device = configuredDevices.values.find { (addressToTypeAndSlotMap[it.deviceAddress]?.first == sensorType) }
 
         if (text == "重连失败" && device != null) {
             iconResId = R.drawable.change
