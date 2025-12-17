@@ -147,10 +147,12 @@ class MonitoringFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        if (savedInstanceState == null) { // Only setup on first creation
+        if (view.tag == null) { // Only setup on first creation of the view
             buildFullDeviceLayout()
             setupButtons()
+            view.tag = "initialized"
         }
+
         binding.backButton.setOnClickListener {
             parentFragmentManager.popBackStack()
         }
@@ -164,14 +166,27 @@ class MonitoringFragment : Fragment() {
         LocalBroadcastManager.getInstance(requireContext()).registerReceiver(serviceReceiver, filter)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // When the fragment becomes visible, ask the service for the latest status of all devices.
+        val intent = Intent(requireContext(), BleService::class.java).apply {
+            action = BleService.ACTION_REQUEST_ALL_STATUSES
+        }
+        requireContext().startService(intent)
+    }
+
     override fun onDestroyView() {
         super.onDestroyView()
         LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(serviceReceiver)
         countdownHandler.removeCallbacksAndMessages(null)
-        // **MODIFICATION**: We NO LONGER disconnect here. The service keeps running.
-        // The session is only ended on manual disconnect or if all devices are lost.
-        compositeDisposable.clear()
         _binding = null
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // If the fragment is truly being destroyed (not just view recreation), then we can consider cleanup.
+        // However, with the current hot-plug logic, we want the service to live on.
+        compositeDisposable.clear()
     }
 
     // --- Core Hot-plug Logic ---
@@ -331,7 +346,7 @@ class MonitoringFragment : Fragment() {
         val disconnectButtonDrawable = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.parseColor("#9E9E9E")); cornerRadius = 50f }
 
         startButton = Button(requireContext()).apply {
-            text = "开始工作"
+            text = "开始连接"
             background = startButtonDrawable
             setTextColor(Color.WHITE)
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER }
@@ -358,8 +373,9 @@ class MonitoringFragment : Fragment() {
                             requireContext().startService(serviceIntent)
                         }
                         configuredDevices.keys.forEach { address ->
-                            val (type, slot) = addressToTypeAndSlotMap[address]!!
-                            updateStatusView(type, slot, "连接中...", Color.BLUE, true)
+                            addressToTypeAndSlotMap[address]?.let { (type, slot) ->
+                                updateStatusView(type, slot, "连接中...", Color.BLUE, true)
+                            } 
                         }
                         Toast.makeText(requireContext(), "云端作业已启动，正在连接设备。", Toast.LENGTH_SHORT).show()
                     },
@@ -374,7 +390,7 @@ class MonitoringFragment : Fragment() {
         }
 
         disconnectButton = Button(requireContext()).apply {
-            text = "结束工作"
+            text = "断开所有连接"
             visibility = View.GONE
             background = disconnectButtonDrawable
             setTextColor(Color.WHITE)
@@ -413,7 +429,7 @@ class MonitoringFragment : Fragment() {
 
     private fun showDisconnectConfirmationDialog() {
         AlertDialog.Builder(requireContext())
-            .setTitle("结束工作")
+            .setTitle("断开所有连接")
             .setMessage("您确定要断开所有设备的连接吗？这将结束本次工作记录。")
             .setPositiveButton("确定") { _, _ ->
                 val serviceIntent = Intent(requireContext(), BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
@@ -465,8 +481,9 @@ class MonitoringFragment : Fragment() {
 
     private fun handleDisconnectUI() {
         configuredDevices.keys.forEach { address ->
-             val (type, slot) = addressToTypeAndSlotMap[address]!!
-             updateStatusView(type, slot, "待连接", Color.GRAY, false)
+             addressToTypeAndSlotMap[address]?.let { (type, slot) ->
+                updateStatusView(type, slot, "待连接", Color.GRAY, false)
+             }
         }
         disconnectButton?.visibility = View.GONE
         startButton?.visibility = View.VISIBLE

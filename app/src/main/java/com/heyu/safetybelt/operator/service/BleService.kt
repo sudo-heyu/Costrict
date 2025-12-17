@@ -166,6 +166,30 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 }
                 evaluateOverallStatus()
             }
+            ACTION_REQUEST_ALL_STATUSES -> {
+                Log.d(TAG, "Broadcasting all current device statuses.")
+                deviceStates.values.forEach { state ->
+                    when (state.connectionStatus) {
+                        ConnectionStatus.CONNECTED -> {
+                            broadcastConnectionState(state.device.deviceAddress, true)
+                            when (state.sensorStatus) {
+                                SensorStatus.NORMAL -> broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true)
+                                SensorStatus.SINGLE_HOOK -> broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true)
+                                SensorStatus.ALARM -> broadcastStatus(state.device.deviceAddress, "异常", "RED", true)
+                                SensorStatus.UNKNOWN -> broadcastStatus(state.device.deviceAddress, "等待数据", "YELLOW", false)
+                            }
+                        }
+                        ConnectionStatus.CONNECTING -> broadcastStatus(state.device.deviceAddress, "正在连接...", "BLUE", true)
+                        ConnectionStatus.RECONNECTING -> broadcastStatus(state.device.deviceAddress, "正在重连...", "BLUE", true)
+                        ConnectionStatus.FAILED -> broadcastStatus(state.device.deviceAddress, "重连失败", "YELLOW", true)
+                        ConnectionStatus.TIMEOUT -> broadcastStatus(state.device.deviceAddress, "超时", "YELLOW", true)
+                        ConnectionStatus.DISCONNECTED -> {
+                            broadcastConnectionState(state.device.deviceAddress, false)
+                            broadcastStatus(state.device.deviceAddress, "已断开", "GRAY", false)
+                        }
+                    }
+                }
+            }
             ACTION_RETRY_CONNECTION -> {
                 val addressToRetry = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (addressToRetry != null && deviceStates.containsKey(addressToRetry)) {
@@ -779,6 +803,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_CONNECT_SPECIFIC = "com.heyu.safetybeltoperators.ACTION_CONNECT_SPECIFIC"
         const val ACTION_DISCONNECT_SPECIFIC = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_SPECIFIC"
         const val ACTION_CONNECTION_STATE_UPDATE = "com.heyu.safetybeltoperators.ACTION_CONNECTION_STATE_UPDATE"
+        const val ACTION_REQUEST_ALL_STATUSES = "com.heyu.safetybeltoperators.ACTION_REQUEST_ALL_STATUSES"
 
 
         const val EXTRA_DEVICES = "com.heyu.safetybeltoperators.EXTRA_DEVICES"
@@ -800,7 +825,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         private const val NOTIFICATION_CHANNEL_ID = "BleServiceChannel"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "BleService"
-        private const val CONNECTION_TIMEOUT_MS = 10000L
+        private const val CONNECTION_TIMEOUT_MS = 30000L
         private const val RECONNECT_DELAY_MS = 2000L
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val SINGLE_HOOK_TIMEOUT_MS = 20000L
