@@ -38,9 +38,13 @@ import com.heyu.safetybelt.operator.model.DeviceScanResult
 import com.heyu.safetybelt.common.Device
 import com.heyu.safetybelt.databinding.FragmentDetectionBinding
 import com.heyu.safetybelt.operator.service.BleService
+import com.heyu.safetybelt.common.WorkSession
+import com.heyu.safetybelt.operator.activity.MainActivityOperator
+import com.heyu.safetybelt.operator.model.WorkRecordManager
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.core.Observable
 import io.reactivex.rxjava3.disposables.CompositeDisposable
+import java.util.Date
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -159,6 +163,11 @@ class DetectionFragment : Fragment() {
         checkAndRequestPermissions()
     }
 
+    override fun onResume() {
+        super.onResume()
+        startBleScan()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         LocalBroadcastManager.getInstance(requireContext()).unregisterReceiver(connectionStateReceiver)
@@ -261,19 +270,34 @@ class DetectionFragment : Fragment() {
         hbsDevices.remove(device)
         updateAllStatusLists()
         saveDeviceLists()
+        disconnectDeviceImmediately(device.device.address)
     }
 
     private fun handleRemoveFromWgd(device: DeviceScanResult) {
         wgdDevices.remove(device)
         updateAllStatusLists()
         saveDeviceLists()
+        disconnectDeviceImmediately(device.device.address)
     }
 
     private fun handleRemoveFromXyk() {
         if (xykDevices.isNotEmpty()) {
+            val address = xykDevices.first().device.address
             xykDevices.clear()
             updateAllStatusLists()
             saveDeviceLists()
+            disconnectDeviceImmediately(address)
+        }
+    }
+
+    private fun disconnectDeviceImmediately(address: String) {
+        // Only attempt to disconnect if a session is actually active
+        if (BleService.currentSessionId != null) {
+            val intent = Intent(requireContext(), BleService::class.java).apply {
+                action = BleService.ACTION_DISCONNECT_SPECIFIC
+                putStringArrayListExtra(BleService.EXTRA_DEVICES_TO_DISCONNECT, arrayListOf(address))
+            }
+            requireContext().startService(intent)
         }
     }
 
@@ -333,9 +357,7 @@ class DetectionFragment : Fragment() {
 
     private fun navigateOrUpdateMonitoring() {
         stopBleScan()
-        saveDeviceLists() // Now safe to call
-
-        val monitoringFragment = parentFragmentManager.findFragmentByTag(MONITORING_FRAGMENT_TAG) as? MonitoringFragment
+        saveDeviceLists()
 
         val allSelectedDevices = ArrayList<DeviceScanResult>().apply {
             addAll(hbsDevices)
@@ -348,26 +370,99 @@ class DetectionFragment : Fragment() {
             return
         }
 
-        if (monitoringFragment == null || !monitoringFragment.isAdded) {
-            // Case 1: MonitoringFragment doesn't exist, create it.
-            Log.d("DetectionFragment", "Creating new MonitoringFragment.")
-            val newMonitoringFragment = MonitoringFragment().apply {
-                arguments = Bundle().apply {
-                    putParcelableArrayList("hbs_devices", ArrayList(hbsDevices))
-                    putParcelableArrayList("wgd_devices", ArrayList(wgdDevices))
-                    putParcelableArrayList("xyk_devices", ArrayList(xykDevices))
+        val currentSessionId = BleService.currentSessionId
+        if (currentSessionId == null) {
+            // Case 1: First time - Start Session and Connect
+            Log.d("DetectionFragment", "No active session found. Starting new cloud work.")
+            Toast.makeText(requireContext(), "正在启动云端作业...", Toast.LENGTH_SHORT).show()
+            
+            startWorkSession(
+                onSessionStarted = { sessionId ->
+                    WorkRecordManager.startNewWork(requireContext())
+                    
+                    val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
+                        action = BleService.ACTION_CONNECT_DEVICES
+                        putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allSelectedDevices)
+                        putExtra(BleService.EXTRA_SESSION_ID, sessionId)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        requireContext().startForegroundService(serviceIntent)
+                    } else {
+                        requireContext().startService(serviceIntent)
+                    }
+                    
+                    navigateToMonitoring(allSelectedDevices)
+                },
+                onSessionFailed = { error ->
+                    activity?.runOnUiThread {
+                        Toast.makeText(requireContext(), "启动云端作业失败: ${error.message}", Toast.LENGTH_LONG).show()
+                    }
                 }
-            }
-            parentFragmentManager.beginTransaction()
-                .replace(R.id.safetybelt_fragment_container, newMonitoringFragment, MONITORING_FRAGMENT_TAG)
-                .addToBackStack(MONITORING_FRAGMENT_TAG)
-                .commit()
+            )
         } else {
-            // Case 2: It exists, update it and pop back stack to show it.
-            Log.d("DetectionFragment", "Updating existing MonitoringFragment.")
-            monitoringFragment.updateDevices(allSelectedDevices)
-            parentFragmentManager.popBackStack()
+            // Case 2: Session exists - Update and Navigate
+            Log.d("DetectionFragment", "Active session found: $currentSessionId. Updating devices.")
+            
+            // Tell the service to connect any NEW devices in the list
+            val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
+                action = BleService.ACTION_CONNECT_SPECIFIC
+                putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allSelectedDevices)
+            }
+            requireContext().startService(serviceIntent)
+            
+            val monitoringFragment = parentFragmentManager.findFragmentByTag(MONITORING_FRAGMENT_TAG) as? MonitoringFragment
+            if (monitoringFragment != null && monitoringFragment.isAdded) {
+                monitoringFragment.updateDevices(allSelectedDevices)
+                parentFragmentManager.popBackStack()
+            } else {
+                navigateToMonitoring(allSelectedDevices)
+            }
         }
+    }
+
+    private fun navigateToMonitoring(devices: ArrayList<DeviceScanResult>) {
+        val newMonitoringFragment = MonitoringFragment().apply {
+            arguments = Bundle().apply {
+                putParcelableArrayList("hbs_devices", ArrayList(hbsDevices))
+                putParcelableArrayList("wgd_devices", ArrayList(wgdDevices))
+                putParcelableArrayList("xyk_devices", ArrayList(xykDevices))
+            }
+        }
+        parentFragmentManager.beginTransaction()
+            .replace(R.id.safetybelt_fragment_container, newMonitoringFragment, MONITORING_FRAGMENT_TAG)
+            .addToBackStack(MONITORING_FRAGMENT_TAG)
+            .commit()
+    }
+
+    private fun startWorkSession(onSessionStarted: (sessionId: String) -> Unit, onSessionFailed: (error: Throwable) -> Unit) {
+        val workerObjectId = (activity as? MainActivityOperator)?.workerObjectId
+        if (workerObjectId == null) {
+            onSessionFailed(IllegalStateException("未能获取到工人ID，请重新登录或重启应用。"))
+            return
+        }
+
+        val allDevices = ArrayList<DeviceScanResult>().apply {
+            addAll(hbsDevices)
+            addAll(wgdDevices)
+            addAll(xykDevices)
+        }
+        val deviceNameList = allDevices.map { it.bestName }
+
+        val workSession = WorkSession().apply {
+            put("worker", LCObject.createWithoutData("Worker", workerObjectId))
+            startTime = Date()
+            totalAlarmCount = 0
+            isOnline = true
+            currentStatus = "正在连接"
+            put("deviceList", deviceNameList)
+        }
+
+        workSession.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
+            override fun onSubscribe(d: io.reactivex.disposables.Disposable) { rx2CompositeDisposable.add(d) }
+            override fun onNext(t: LCObject) { onSessionStarted(t.objectId) }
+            override fun onError(e: Throwable) { onSessionFailed(e) }
+            override fun onComplete() {}
+        })
     }
 
 
@@ -459,40 +554,6 @@ class DetectionFragment : Fragment() {
         }
     }
 
-    private fun saveDevicesToCloud() {
-        val allDevices = mutableListOf<DeviceScanResult>()
-        allDevices.addAll(hbsDevices)
-        allDevices.addAll(wgdDevices)
-        allDevices.addAll(xykDevices)
-
-        if (allDevices.isEmpty()) {
-            return
-        }
-
-        val devicesToSave = allDevices.map { scanResult ->
-            val device = Device()
-            device.macAddress = scanResult.device.address
-            device.bestName = scanResult.bestName
-            device.sensorType = getSensorTypeFromDeviceName(scanResult.bestName) ?: 0
-            device
-        }
-
-        devicesToSave.forEach { device ->
-            device.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
-                override fun onSubscribe(d: io.reactivex.disposables.Disposable) {
-                    rx2CompositeDisposable.add(d)
-                }
-                override fun onNext(t: LCObject) {
-                    Log.d("DetectionFragment", "Device ${device.bestName} saved successfully.")
-                }
-                override fun onError(e: Throwable) {
-                    Log.e("DetectionFragment", "Failed to save device ${device.bestName}", e)
-                }
-                override fun onComplete() {}
-            })
-        }
-    }
-
     private val bleScanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult?) {
             result?.let { processScanResult(it) }
@@ -552,6 +613,7 @@ class DetectionFragment : Fragment() {
         val sortedList = scannedDevicesMap.values.sortedByDescending { it.rssi }
         scanAdapter.updateList(sortedList)
 
+        // Only auto-remove if NOT connected (don't remove devices we are currently using)
         var listChanged = false
         val staleDevicePredicate: (DeviceScanResult) -> Boolean = { device ->
             val notSeenRecently = (currentTime - (deviceLastSeen[device.device.address] ?: 0)) > 5000
@@ -568,7 +630,6 @@ class DetectionFragment : Fragment() {
                 if (isAdded) {
                     updateAllStatusLists()
                     saveDeviceLists()
-                    Toast.makeText(context, "已自动移除离线或失联的设备", Toast.LENGTH_SHORT).show()
                 }
             }
         }

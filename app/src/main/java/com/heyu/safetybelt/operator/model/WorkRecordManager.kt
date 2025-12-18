@@ -182,7 +182,7 @@ object WorkRecordManager {
     }
 
     // 结束工作
-    fun stopCurrentWork(context: Context, alertCount: Int) {
+    fun stopCurrentWork(context: Context, alertCount: Int = -1) {
         val list = getAllRecords(context)
         if (list.isEmpty()) return
 
@@ -193,10 +193,12 @@ object WorkRecordManager {
                 if (it.endTime == null) it.endTime = currentTime
             }
 
+            val finalAlertCount = if (alertCount >= 0) alertCount else currentRecord.safeAlarmList.size
+
             val updatedRecord = currentRecord.copy(
                 endTime = currentTime,
                 lastActiveTime = currentTime,
-                alertCount = alertCount
+                alertCount = finalAlertCount
             )
             list[0] = updatedRecord
             saveRecords(context, list)

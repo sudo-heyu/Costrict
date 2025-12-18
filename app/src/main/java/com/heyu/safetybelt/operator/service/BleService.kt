@@ -45,12 +45,13 @@ import java.util.Locale
 import java.util.Queue
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.collections.get
 
 @SuppressLint("MissingPermission")
 class BleService : Service(), TextToSpeech.OnInitListener {
 
-    // --- Data Classes for State Management ---
     private enum class ConnectionStatus { CONNECTING, CONNECTED, DISCONNECTED, FAILED, TIMEOUT, RECONNECTING }
     private enum class SensorStatus { NORMAL, SINGLE_HOOK, ALARM, UNKNOWN }
 
@@ -59,7 +60,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         var gatt: BluetoothGatt? = null,
         var connectionStatus: ConnectionStatus = ConnectionStatus.DISCONNECTED,
         var sensorStatus: SensorStatus = SensorStatus.UNKNOWN,
-        var sensorType: Int? = null, // 1-6
+        var sensorType: Int? = null,
         var isAbnormalSignal: Boolean = false,
         var reconnectAttempts: Int = 0,
         val subscriptionQueue: Queue<BluetoothGattCharacteristic> = LinkedList(),
@@ -67,19 +68,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         var singleHookTimerExpired: Boolean = false
     )
 
-    // --- State Management ---
-    private val deviceStates = ConcurrentHashMap<String, DeviceState>() // The primary state holder
-    private var currentSessionId: String? = null
+    private val deviceStates = ConcurrentHashMap<String, DeviceState>()
     private val compositeDisposable = CompositeDisposable()
-    
-    // --- LiveQuery Management ---
     private var liveQuery: LCLiveQuery? = null
-
-    // --- Handlers ---
     private val mainHandler = Handler(Looper.getMainLooper())
     private val reconnectHandler = Handler(Looper.getMainLooper())
 
-    // --- TTS, Vibration & Alarm Loop Properties ---
     private lateinit var tts: TextToSpeech
     private var isTtsInitialized = false
     private val alarmMessageQueue = Collections.synchronizedList(mutableListOf<String>())
@@ -87,15 +81,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var isAlarmLoopRunning = false
     @Volatile private var isMuted = false
     private val muteRunnable = Runnable { isMuted = false }
-
-    // --- Service Lifecycle & Setup ---
+    private var isShuttingDown = false
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts.setLanguage(Locale.CHINESE)
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Log.e(TAG, "TTS Error: Chinese language is not supported.")
-            } else {
+            if (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED) {
                 isTtsInitialized = true
                 tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
@@ -103,8 +94,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                     override fun onError(utteranceId: String?) { if (utteranceId == ALARM_UTTERANCE_ID) mainHandler.postDelayed({ playNextAlarmInQueue() }, 500) }
                 })
             }
-        } else {
-            Log.e(TAG, "TTS initialization failed.")
         }
     }
 
@@ -128,343 +117,267 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             ACTION_CONNECT_DEVICES -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
                 val newSessionId = intent.getStringExtra(EXTRA_SESSION_ID)
-
                 if (newSessionId != null && newSessionId != currentSessionId) {
                     currentSessionId = newSessionId
                     startLiveQuery(newSessionId)
-                    cleanupConnectionsAndState(clearSession = false) // Don't clear session ID here
+                    cleanupConnectionsAndState(false)
                     updateWorkSession(isOnline = true)
-                } else if (currentSessionId == null) {
-                     Log.e(TAG, "Attempted to connect without a session ID.")
                 }
-
-                devices?.forEach { device ->
-                     if (!deviceStates.containsKey(device.deviceAddress)) {
-                        deviceStates[device.deviceAddress] = DeviceState(device)
-                        connectWithTimeout(device.deviceAddress)
-                    }
-                }
+                devices?.forEach { if (!deviceStates.containsKey(it.deviceAddress)) { deviceStates[it.deviceAddress] = DeviceState(it); connectWithTimeout(it.deviceAddress) } }
             }
-            ACTION_DISCONNECT_ALL -> {
-                disconnectAllDevices(true)
-            }
+            ACTION_DISCONNECT_ALL -> disconnectAllDevices(true)
             ACTION_CONNECT_SPECIFIC -> {
-                val devicesToConnect = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
-                devicesToConnect?.forEach { device ->
-                    if (!deviceStates.containsKey(device.deviceAddress)) {
-                        Log.d(TAG, "Connecting specific device: ${device.deviceAddress}")
-                        deviceStates[device.deviceAddress] = DeviceState(device)
-                        connectWithTimeout(device.deviceAddress)
-                    }
-                }
+                val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
+                devices?.forEach { if (!deviceStates.containsKey(it.deviceAddress)) { deviceStates[it.deviceAddress] = DeviceState(it); connectWithTimeout(it.deviceAddress) } }
             }
             ACTION_DISCONNECT_SPECIFIC -> {
-                val addressesToDisconnect = intent.getStringArrayListExtra(EXTRA_DEVICES_TO_DISCONNECT)
-                addressesToDisconnect?.forEach { address ->
-                    Log.d(TAG, "Disconnecting specific device: $address")
-                    disconnectSpecificDevice(address, true)
-                }
+                intent.getStringArrayListExtra(EXTRA_DEVICES_TO_DISCONNECT)?.forEach { disconnectSpecificDevice(it, true) }
                 evaluateOverallStatus()
             }
-            ACTION_REQUEST_ALL_STATUSES -> {
-                Log.d(TAG, "Broadcasting all current device statuses.")
-                deviceStates.values.forEach { state ->
-                    when (state.connectionStatus) {
-                        ConnectionStatus.CONNECTED -> {
-                            broadcastConnectionState(state.device.deviceAddress, true)
-                            when (state.sensorStatus) {
-                                SensorStatus.NORMAL -> broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true)
-                                SensorStatus.SINGLE_HOOK -> broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true)
-                                SensorStatus.ALARM -> broadcastStatus(state.device.deviceAddress, "异常", "RED", true)
-                                SensorStatus.UNKNOWN -> broadcastStatus(state.device.deviceAddress, "等待数据", "YELLOW", false)
-                            }
-                        }
-                        ConnectionStatus.CONNECTING -> broadcastStatus(state.device.deviceAddress, "正在连接...", "BLUE", true)
-                        ConnectionStatus.RECONNECTING -> broadcastStatus(state.device.deviceAddress, "正在重连...", "BLUE", true)
-                        ConnectionStatus.FAILED -> broadcastStatus(state.device.deviceAddress, "重连失败", "YELLOW", true)
-                        ConnectionStatus.TIMEOUT -> broadcastStatus(state.device.deviceAddress, "超时", "YELLOW", true)
-                        ConnectionStatus.DISCONNECTED -> {
-                            broadcastConnectionState(state.device.deviceAddress, false)
-                            broadcastStatus(state.device.deviceAddress, "已断开", "GRAY", false)
-                        }
-                    }
-                }
-            }
+            ACTION_REQUEST_ALL_STATUSES -> broadcastAllStatuses()
             ACTION_RETRY_CONNECTION -> {
-                val addressToRetry = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                if (addressToRetry != null && deviceStates.containsKey(addressToRetry)) {
-                    Log.d(TAG, "Received retry request for $addressToRetry")
-                    deviceStates[addressToRetry]?.reconnectAttempts = 0
-                    connectWithTimeout(addressToRetry)
-                }
+                val addr = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+                if (addr != null && deviceStates.containsKey(addr)) { deviceStates[addr]?.reconnectAttempts = 0; connectWithTimeout(addr) }
             }
             ACTION_MUTE_ALARMS -> {
                 isMuted = true
                 mainHandler.removeCallbacks(muteRunnable)
                 mainHandler.postDelayed(muteRunnable, MUTE_DURATION_MS)
-                if (this::tts.isInitialized) tts.stop()
+                if (isTtsInitialized) tts.stop()
             }
-            ACTION_RESET_ADMIN_ALERT -> {
-                resetAdminAlert()
+            ACTION_RESET_ADMIN_ALERT -> resetAdminAlert()
+        }
+        return START_REDELIVER_INTENT
+    }
+
+    private fun broadcastAllStatuses() {
+        deviceStates.values.forEach { state ->
+            when (state.connectionStatus) {
+                ConnectionStatus.CONNECTED -> {
+                    broadcastConnectionState(state.device.deviceAddress, true)
+                    when (state.sensorStatus) {
+                        SensorStatus.NORMAL -> broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true)
+                        SensorStatus.SINGLE_HOOK -> broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true)
+                        SensorStatus.ALARM -> broadcastStatus(state.device.deviceAddress, "异常", "RED", true)
+                        else -> broadcastStatus(state.device.deviceAddress, "等待数据", "YELLOW", false)
+                    }
+                }
+                ConnectionStatus.CONNECTING, ConnectionStatus.RECONNECTING -> broadcastStatus(state.device.deviceAddress, "正在连接...", "BLUE", true)
+                ConnectionStatus.FAILED -> broadcastStatus(state.device.deviceAddress, "重连失败", "YELLOW", true)
+                ConnectionStatus.TIMEOUT -> broadcastStatus(state.device.deviceAddress, "超时", "YELLOW", true)
+                else -> broadcastStatus(state.device.deviceAddress, "已断开", "GRAY", false)
             }
         }
-
-        return START_REDELIVER_INTENT
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        if (this::tts.isInitialized) {
-            tts.stop()
-            tts.shutdown()
-        }
+        if (isTtsInitialized) { tts.stop(); tts.shutdown() }
         disconnectAllDevices(false)
         stopLiveQuery()
         reconnectHandler.removeCallbacksAndMessages(null)
         compositeDisposable.clear()
+        currentSessionId = null
     }
 
-    // --- LiveQuery & Remote Alert ---
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (isShuttingDown) return
+        isShuttingDown = true
+        Log.d(TAG, "onTaskRemoved called, finalizing cloud state for session $currentSessionId")
+        
+        if (!currentSessionId.isNullOrEmpty()) {
+            val latch = CountDownLatch(1)
+            Thread {
+                try {
+                    endSessionSynchronously("离线")
+                    Log.d(TAG, "Final session update completed successfully")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Final session update error: ${e.message}")
+                } finally {
+                    latch.countDown()
+                }
+            }.start()
+
+            try {
+                // 阻塞主线程最多 3.5 秒，强制给网络请求留出发送时间
+                if (!latch.await(3500, TimeUnit.MILLISECONDS)) {
+                    Log.w(TAG, "Final session update timed out")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Final session update interrupted", e)
+            }
+        }
+        
+        cleanupConnectionsAndState(true)
+        super.onTaskRemoved(rootIntent)
+        stopSelf()
+    }
+
+    private fun endSessionSynchronously(statusText: String) {
+        val sid = currentSessionId ?: return
+        Log.d(TAG, "Attempting to end session $sid synchronously with status: $statusText")
+        
+        // 1. 更新 WorkSession 表 (云端)
+        val session = LCObject.createWithoutData("WorkSession", sid)
+        session.put("currentStatus", statusText)
+        session.put("isOnline", false)
+        session.put("endTime", Date())
+        for (i in 1..6) session.put("sensor${i}Status", "未连接")
+        
+        // 2. 更新 User 表的 isOnline 状态 (云端)
+        val user = LCUser.getCurrentUser()
+        user?.put("isOnline", false)
+        
+        try {
+            // 第一重保险：saveEventually 将修改存入本地数据库
+            session.saveEventually()
+            user?.saveEventually()
+            
+            // 第二重保险：阻塞式 save() 确保立即上传
+            session.save()
+            Log.d(TAG, "WorkSession $sid updated successfully in cloud")
+            
+            user?.save()
+            Log.d(TAG, "User ${user?.objectId} isOnline set to false successfully in cloud")
+        } catch (e: Exception) {
+            Log.e(TAG, "Final sync save failed, relying on saveEventually. Error: ${e.message}")
+        }
+        
+        LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SESSION_ENDED))
+    }
 
     private fun startLiveQuery(sessionId: String) {
-        stopLiveQuery() // Ensure previous subscription is cleared
-
+        stopLiveQuery()
         val query = LCQuery<WorkSession>("WorkSession").whereEqualTo("objectId", sessionId)
         liveQuery = LCLiveQuery.initWithQuery(query)
-        
         liveQuery?.setEventHandler(object : LCLiveQueryEventHandler() {
             override fun onObjectUpdated(obj: LCObject?, updateKeyList: MutableList<String>?) {
-                if (obj == null) return
-                // Check if adminAlert field is updated to true
-                if (updateKeyList?.contains("adminAlert") == true) {
-                    // Fetch the latest object to get the actual value, avoiding race conditions or incomplete data
-                    fetchWorkSessionAndCheckAlert(obj.objectId)
-                }
+                if (obj != null && updateKeyList?.contains("adminAlert") == true) fetchWorkSessionAndCheckAlert(obj.objectId)
             }
         })
-
         liveQuery?.subscribeInBackground(object : LCLiveQuerySubscribeCallback() {
-            override fun done(e: LCException?) {
-                if (e == null) {
-                    Log.d(TAG, "LiveQuery subscribed successfully for session: $sessionId")
-                } else {
-                    Log.e(TAG, "LiveQuery subscription failed", e)
-                }
-            }
+            override fun done(e: LCException?) { if (e != null) Log.e(TAG, "LiveQuery 订阅失败", e) }
         })
     }
 
-    private fun stopLiveQuery() {
-        liveQuery?.unsubscribeInBackground(object : LCLiveQuerySubscribeCallback() {
-            override fun done(e: LCException?) {
-                Log.d(TAG, "LiveQuery unsubscribed")
-            }
-        })
-        liveQuery = null
-    }
+    private fun stopLiveQuery() { liveQuery?.unsubscribeInBackground(object : LCLiveQuerySubscribeCallback() { override fun done(e: LCException?) {} }); liveQuery = null }
 
     private fun fetchWorkSessionAndCheckAlert(sessionId: String) {
-        val query = LCQuery<WorkSession>("WorkSession")
-        query.getInBackground(sessionId).subscribe(object : Observer<WorkSession> {
+        LCQuery<WorkSession>("WorkSession").getInBackground(sessionId).subscribe(object : Observer<WorkSession> {
             override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
-            override fun onNext(session: WorkSession) {
-                if (session.getBoolean("adminAlert")) {
-                    sendAdminAlertBroadcast()
-                }
-            }
-            override fun onError(e: Throwable) {
-                Log.e(TAG, "Failed to fetch WorkSession for alert check", e)
-            }
+            override fun onNext(session: WorkSession) { if (session.getBoolean("adminAlert")) sendAdminAlertBroadcast() }
+            override fun onError(e: Throwable) {}
             override fun onComplete() {}
         })
     }
 
-    private fun sendAdminAlertBroadcast() {
-        val intent = Intent(ACTION_SHOW_ADMIN_ALERT)
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-        // Optionally trigger local vibration/sound here as well
-        triggerVibration()
-    }
+    private fun sendAdminAlertBroadcast() { LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SHOW_ADMIN_ALERT)); triggerVibration() }
 
     private fun resetAdminAlert() {
-        if (currentSessionId.isNullOrEmpty()) return
-        
-        val session = LCObject.createWithoutData("WorkSession", currentSessionId!!)
+        val sid = currentSessionId ?: return
+        val session = LCObject.createWithoutData("WorkSession", sid)
         session.put("adminAlert", false)
         session.saveInBackground().subscribe(object : Observer<LCObject> {
             override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
-            override fun onNext(t: LCObject) { Log.d(TAG, "Admin alert reset successfully") }
-            override fun onError(e: Throwable) { Log.e(TAG, "Failed to reset admin alert", e) }
-            override fun onComplete() {}
+            override fun onNext(t: LCObject) {} override fun onError(e: Throwable) {} override fun onComplete() {}
         })
     }
 
-    // --- Connection Management ---
-
-    private fun cleanupConnectionsAndState(clearSession: Boolean) {
+    private fun cleanupConnectionsAndState(clearLocalSession: Boolean) {
         mainHandler.removeCallbacksAndMessages(null)
         reconnectHandler.removeCallbacksAndMessages(null)
-        deviceStates.values.forEach { state ->
-            state.gatt?.close()
-            broadcastConnectionState(state.device.deviceAddress, false) // Broadcast disconnection
-            state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
-        }
+        deviceStates.values.forEach { it.gatt?.close(); broadcastConnectionState(it.device.deviceAddress, false); it.singleHookTimer?.let { mainHandler.removeCallbacks(it) } }
         deviceStates.clear()
         stopAlarmCycle()
-        if(clearSession) {
-            currentSessionId = null
-        }
+        if (clearLocalSession) currentSessionId = null
     }
+
     private fun disconnectSpecificDevice(address: String, notifyUi: Boolean) {
         val state = deviceStates.remove(address)
         if (state != null) {
-            state.gatt?.disconnect()
-            state.gatt?.close()
-            Log.d(TAG, "Disconnected specific device: $address")
-            broadcastConnectionState(address, false) // Broadcast disconnection
-            if (notifyUi) {
-                broadcastStatus(address, "已移除", "GRAY", false)
-            }
+            state.gatt?.disconnect(); state.gatt?.close(); broadcastConnectionState(address, false)
+            if (notifyUi) broadcastStatus(address, "已移除", "GRAY", false)
         }
+        checkAllDevicesDisconnected()
     }
 
     private fun disconnectAllDevices(isManual: Boolean) {
         val addresses = deviceStates.keys.toList()
+        if (isManual && !currentSessionId.isNullOrEmpty()) endSessionSynchronously("手动断开")
         cleanupConnectionsAndState(true)
-        stopLiveQuery() // Also stop LiveQuery when disconnecting
-
-        if (isManual) {
-            updateWorkSession(isOnline = false, status = "手动断开", shouldEndSession = true)
-            addresses.forEach { broadcastStatus(it, "待连接", "GRAY", false) }
-        } else {
-            updateWorkSession(isOnline = false, status = "离线", shouldEndSession = true)
-        }
+        stopLiveQuery()
+        if (isManual) addresses.forEach { broadcastStatus(it, "待连接", "GRAY", false) }
+        stopSelf()
     }
 
     private fun connectWithTimeout(address: String) {
         val state = deviceStates[address] ?: return
         broadcastStatus(address, "正在连接...", "BLUE", true)
         state.connectionStatus = ConnectionStatus.CONNECTING
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            state.gatt = state.device.device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            @Suppress("DEPRECATION")
-            state.gatt = state.device.device.connectGatt(this, false, gattCallback)
-        }
-
-        val timeoutRunnable = Runnable {
+        state.gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) state.device.device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                     else state.device.device.connectGatt(this, false, gattCallback)
+        mainHandler.postDelayed({
             if (state.connectionStatus == ConnectionStatus.CONNECTING) {
-                Log.w(TAG, "Connection timeout for $address")
-                state.connectionStatus = ConnectionStatus.TIMEOUT
-                state.gatt?.close()
-                broadcastStatus(address, "超时", "YELLOW", true)
-                broadcastConnectionState(address, false) // Broadcast disconnection
-                scheduleReconnect(address)
+                state.connectionStatus = ConnectionStatus.TIMEOUT; state.gatt?.close()
+                broadcastStatus(address, "超时", "YELLOW", true); broadcastConnectionState(address, false); scheduleReconnect(address)
             }
-        }
-        mainHandler.postDelayed(timeoutRunnable, CONNECTION_TIMEOUT_MS)
+        }, CONNECTION_TIMEOUT_MS)
     }
 
     private fun scheduleReconnect(address: String) {
-        val state = deviceStates[address]
-        if (state == null) { // Hot-plug check
-            Log.d(TAG, "Reconnect cancelled for $address as it has been removed.")
-            return
-        }
-
+        val state = deviceStates[address] ?: return
         if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Log.w(TAG, "Max reconnect attempts reached for $address. Stopping.")
-            broadcastStatus(address, "重连失败", "YELLOW", true)
-            state.connectionStatus = ConnectionStatus.FAILED
-            broadcastConnectionState(address, false) // Broadcast disconnection
-            checkAllDevicesDisconnected()
-            return
+            state.connectionStatus = ConnectionStatus.FAILED; broadcastStatus(address, "重连失败", "YELLOW", true); broadcastConnectionState(address, false); checkAllDevicesDisconnected(); return
         }
-
-        state.reconnectAttempts++
-        state.connectionStatus = ConnectionStatus.RECONNECTING
+        state.reconnectAttempts++; state.connectionStatus = ConnectionStatus.RECONNECTING
         broadcastStatus(address, "正在重连...", "BLUE", true)
-
-        val reconnectRunnable = Runnable { connectWithTimeout(address) }
-        reconnectHandler.postDelayed(reconnectRunnable, RECONNECT_DELAY_MS)
+        reconnectHandler.postDelayed({ connectWithTimeout(address) }, RECONNECT_DELAY_MS)
     }
 
     private fun checkAllDevicesDisconnected() {
-        if (deviceStates.isNotEmpty()) return
-
-        Log.d(TAG, "All devices are disconnected. Ending work session.")
-        updateWorkSession(isOnline = false, status = "设备离线", shouldEndSession = true)
-        stopLiveQuery()
+        val hasAnyActive = deviceStates.values.any { it.connectionStatus == ConnectionStatus.CONNECTED || it.connectionStatus == ConnectionStatus.CONNECTING || it.connectionStatus == ConnectionStatus.RECONNECTING }
+        if (!hasAnyActive && !currentSessionId.isNullOrEmpty()) {
+            endSessionSynchronously(if (deviceStates.isEmpty()) "设备离线" else "设备失联")
+            cleanupConnectionsAndState(true); stopLiveQuery(); stopSelf()
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            val address = gatt.device.address
-            mainHandler.removeCallbacksAndMessages(null) // Cancel connection timeout
-            val state = deviceStates[address]
-
-            if (state == null) {
-                gatt.close()
-                return
-            }
-
+            val address = gatt.device.address; mainHandler.removeCallbacksAndMessages(null)
+            val state = deviceStates[address] ?: return
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.d(TAG, "Successfully connected to $address")
-                    state.connectionStatus = ConnectionStatus.CONNECTED
-                    broadcastConnectionState(address, true) // Broadcast connection
-                    state.reconnectAttempts = 0
+                    state.connectionStatus = ConnectionStatus.CONNECTED; broadcastConnectionState(address, true); state.reconnectAttempts = 0
                     mainHandler.post { state.gatt?.discoverServices() }
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    handleDisconnection(address, "已断开", "GRAY", fromUser = false)
-                }
-            } else {
-                Log.e(TAG, "GATT Error for $address. Status: $status")
-                handleDisconnection(address, "连接失败", "RED", fromUser = false)
-            }
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) handleDisconnection(address, "已断开", "GRAY", false)
+            } else handleDisconnection(address, "连接失败", "RED", false)
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val state = deviceStates[gatt.device.address]
-            if (status != BluetoothGatt.GATT_SUCCESS || state == null) {
-                handleDisconnection(gatt.device.address, "服务发现失败", "RED", fromUser = false)
-                return
-            }
-            state.subscriptionQueue.clear()
-            gatt.getService(HEARTBEAT_SERVICE_UUID)?.getCharacteristic(HEARTBEAT_CHARACTERISTIC_UUID)?.let { state.subscriptionQueue.add(it) }
-            gatt.getService(SENSOR_DATA_SERVICE_UUID)?.getCharacteristic(SENSOR_DATA_CHARACTERISTIC_UUID)?.let { state.subscriptionQueue.add(it) }
-            processNextSubscription(gatt.device.address)
+            val state = deviceStates[gatt.device.address] ?: return
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                state.subscriptionQueue.clear()
+                gatt.getService(HEARTBEAT_SERVICE_UUID)?.getCharacteristic(HEARTBEAT_CHARACTERISTIC_UUID)?.let { state.subscriptionQueue.add(it) }
+                gatt.getService(SENSOR_DATA_SERVICE_UUID)?.getCharacteristic(SENSOR_DATA_CHARACTERISTIC_UUID)?.let { state.subscriptionQueue.add(it) }
+                processNextSubscription(gatt.device.address)
+            } else handleDisconnection(gatt.device.address, "服务发现失败", "RED", false)
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                processNextSubscription(gatt.device.address)
-            } else {
-                Log.w(TAG, "Descriptor write failed for ${gatt.device.address}")
-                handleDisconnection(gatt.device.address, "订阅失败", "RED", fromUser = false)
-            }
+            if (status == BluetoothGatt.GATT_SUCCESS) processNextSubscription(gatt.device.address)
+            else handleDisconnection(gatt.device.address, "订阅失败", "RED", false)
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            val address = gatt.device.address
-            val state = deviceStates[address] ?: return
-
+            val state = deviceStates[gatt.device.address] ?: return
             when (characteristic.uuid) {
-                HEARTBEAT_CHARACTERISTIC_UUID -> {
-                    parseHeartbeatData(characteristic.value)?.let { broadcastHeartbeat(address, it) }
-                }
-                SENSOR_DATA_CHARACTERISTIC_UUID -> {
-                    parseSensorData(characteristic.value)?.let { parsedData ->
-                        val isFirstData = state.sensorType == null
-                        if (isFirstData) {
-                            state.sensorType = parsedData.sensorType
-                        }
-
-                        if (isFirstData || state.isAbnormalSignal != parsedData.isAbnormal) {
-                            state.isAbnormalSignal = parsedData.isAbnormal
-                            evaluateOverallStatus()
-                        }
+                HEARTBEAT_CHARACTERISTIC_UUID -> parseHeartbeatData(characteristic.value)?.let { broadcastHeartbeat(gatt.device.address, it) }
+                SENSOR_DATA_CHARACTERISTIC_UUID -> parseSensorData(characteristic.value)?.let { parsed ->
+                    val isFirst = state.sensorType == null
+                    if (isFirst) state.sensorType = parsed.sensorType
+                    if (isFirst || state.isAbnormalSignal != parsed.isAbnormal) {
+                        state.isAbnormalSignal = parsed.isAbnormal; evaluateOverallStatus()
                     }
                 }
             }
@@ -472,328 +385,96 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun handleDisconnection(address: String, statusText: String, color: String, fromUser: Boolean) {
-        val state = deviceStates[address]
-        state?.gatt?.close()
-        if (state != null) {
-            state.connectionStatus = ConnectionStatus.DISCONNECTED
-            broadcastConnectionState(address, false) // Broadcast disconnection
-            state.sensorStatus = SensorStatus.UNKNOWN
-            broadcastStatus(address, statusText, color, false)
-            evaluateOverallStatus()
-            if (!fromUser) { // Only reconnect if it was not a user-initiated disconnect
-                 scheduleReconnect(address)
-            }
-        }
+        val state = deviceStates[address] ?: return
+        state.gatt?.close(); state.connectionStatus = ConnectionStatus.DISCONNECTED; broadcastConnectionState(address, false)
+        state.sensorStatus = SensorStatus.UNKNOWN; broadcastStatus(address, statusText, color, false); evaluateOverallStatus()
+        if (!fromUser) scheduleReconnect(address)
     }
 
     private fun processNextSubscription(address: String) {
         val state = deviceStates[address] ?: return
-        val characteristic = state.subscriptionQueue.poll()
-
-        if (characteristic == null) {
-            broadcastStatus(address, "等待数据", "YELLOW", false)
-            // Do not set sensorStatus to UNKNOWN here, let evaluateOverallStatus handle it
-            return
-        }
-
-        state.gatt?.setCharacteristicNotification(characteristic, true)
+        val char = state.subscriptionQueue.poll() ?: run { broadcastStatus(address, "已就绪", "GREEN", false); return }
+        state.gatt?.setCharacteristicNotification(char, true)
         mainHandler.postDelayed({
-            characteristic.getDescriptor(CCCD_UUID)?.let { descriptor ->
-                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                state.gatt?.writeDescriptor(descriptor)
-            }
+            char.getDescriptor(CCCD_UUID)?.let { it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; state.gatt?.writeDescriptor(it) }
         }, 200)
     }
 
-    // --- Status Evaluation ---
-
     private fun evaluateOverallStatus() {
-        val activeStates = deviceStates.values.filter { it.connectionStatus == ConnectionStatus.CONNECTED && it.sensorType != null }
-        val abnormalHookSensorTypes = activeStates.filter { it.isAbnormalSignal && it.sensorType != 5 }.mapNotNull { it.sensorType?.minus(1) }.toSet()
-        val isSingleHookState = SINGLE_HOOK_COMBINATIONS.contains(abnormalHookSensorTypes)
+        val active = deviceStates.values.filter { it.connectionStatus == ConnectionStatus.CONNECTED && it.sensorType != null }
+        val abnormalHookTypes = active.filter { it.isAbnormalSignal && it.sensorType != 5 }.mapNotNull { it.sensorType?.minus(1) }.toSet()
+        val isSingle = SINGLE_HOOK_COMBINATIONS.contains(abnormalHookTypes)
 
-        deviceStates.values.forEach { state -> // Iterate over all states
-            val previousStatus = state.sensorStatus
-            
-            if (state.connectionStatus != ConnectionStatus.CONNECTED) {
-                state.sensorStatus = SensorStatus.UNKNOWN
-            } else {
-                 state.sensorStatus = when {
-                    !state.isAbnormalSignal -> SensorStatus.NORMAL
-                    state.sensorType == 5 -> SensorStatus.ALARM
-                    isSingleHookState -> if (state.singleHookTimerExpired) SensorStatus.ALARM else SensorStatus.SINGLE_HOOK
-                    else -> SensorStatus.ALARM
-                }
-            }
-
-            if (previousStatus != state.sensorStatus) {
-                updateDeviceUiAndTimers(state)
-            }
+        deviceStates.values.forEach { state ->
+            val prev = state.sensorStatus
+            state.sensorStatus = if (state.connectionStatus != ConnectionStatus.CONNECTED) SensorStatus.UNKNOWN
+                else when { !state.isAbnormalSignal -> SensorStatus.NORMAL; state.sensorType == 5 -> SensorStatus.ALARM; isSingle -> if (state.singleHookTimerExpired) SensorStatus.ALARM else SensorStatus.SINGLE_HOOK; else -> SensorStatus.ALARM }
+            if (prev != state.sensorStatus) updateDeviceUiAndTimers(state)
         }
 
-        val partStatuses = Array(6) { SensorStatus.UNKNOWN }
-        val groupedByPart = deviceStates.values.groupBy { it.sensorType }
-
-        for (partNumber in 1..6) {
-            val devicesForPart = groupedByPart[partNumber]
-            if (devicesForPart.isNullOrEmpty()) {
-                partStatuses[partNumber - 1] = SensorStatus.UNKNOWN
-                continue
-            }
-
-            partStatuses[partNumber - 1] = when {
-                devicesForPart.any { it.sensorStatus == SensorStatus.ALARM } -> SensorStatus.ALARM
-                devicesForPart.any { it.sensorStatus == SensorStatus.SINGLE_HOOK } -> SensorStatus.SINGLE_HOOK
-                devicesForPart.all { it.sensorStatus == SensorStatus.NORMAL } -> SensorStatus.NORMAL
-                else -> SensorStatus.UNKNOWN
-            }
+        val partStatuses = Array(6) { i ->
+            val devices = deviceStates.values.filter { it.sensorType == i + 1 }
+            if (devices.isEmpty()) SensorStatus.UNKNOWN else if (devices.any { it.sensorStatus == SensorStatus.ALARM }) SensorStatus.ALARM else if (devices.any { it.sensorStatus == SensorStatus.SINGLE_HOOK }) SensorStatus.SINGLE_HOOK else if (devices.all { it.sensorStatus == SensorStatus.NORMAL }) SensorStatus.NORMAL else SensorStatus.UNKNOWN
         }
-
-        val overallStatusString = when {
-            partStatuses.any { it == SensorStatus.ALARM } -> "异常"
-            partStatuses.any { it == SensorStatus.SINGLE_HOOK } -> "单挂"
-            deviceStates.isEmpty() -> "已断开"
-            else -> "正常"
-        }
-
-        updateWorkSession(status = overallStatusString, partStatuses = partStatuses)
-        updateAlarmQueueAndCycle()
+        val overall = when { partStatuses.any { it == SensorStatus.ALARM } -> "异常"; partStatuses.any { it == SensorStatus.SINGLE_HOOK } -> "单挂"; deviceStates.isEmpty() -> "已断开"; else -> "正常" }
+        updateWorkSession(status = overall, partStatuses = partStatuses); updateAlarmQueueAndCycle()
     }
 
     private fun updateDeviceUiAndTimers(state: DeviceState) {
         when (state.sensorStatus) {
-            SensorStatus.NORMAL -> {
-                cancelSingleHookTimer(state)
-                broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true)
-            }
-            SensorStatus.SINGLE_HOOK -> {
-                startSingleHookTimer(state)
-                broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true)
-            }
-            SensorStatus.ALARM -> {
-                state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
-                state.singleHookTimer = null
-                broadcastStatus(state.device.deviceAddress, "异常", "RED", true)
-                logAlarmToCloud(state.device.deviceAddress, state.sensorType)
-            }
-            SensorStatus.UNKNOWN -> { /* No immediate UI update */ }
+            SensorStatus.NORMAL -> { cancelSingleHookTimer(state); broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true) }
+            SensorStatus.SINGLE_HOOK -> { startSingleHookTimer(state); broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true) }
+            SensorStatus.ALARM -> { state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }; state.singleHookTimer = null; broadcastStatus(state.device.deviceAddress, "异常", "RED", true); logAlarmToCloud(state.device.deviceAddress, state.sensorType) }
+            else -> {}
         }
     }
 
-    private fun startSingleHookTimer(state: DeviceState) {
-        if (state.singleHookTimer != null) return
-        val runnable = Runnable {
-            Log.d(TAG, "Single hook timer expired for ${state.device.deviceAddress}. Re-evaluating.")
-            state.singleHookTimerExpired = true
-            state.singleHookTimer = null
-            evaluateOverallStatus()
-        }
-        state.singleHookTimer = runnable
-        mainHandler.postDelayed(runnable, SINGLE_HOOK_TIMEOUT_MS)
-    }
-
-    private fun cancelSingleHookTimer(state: DeviceState) {
-        state.singleHookTimerExpired = false
-        state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
-        state.singleHookTimer = null
-    }
-
-    // --- Alarm & TTS Management ---
-
-    private fun stopAlarmCycle() {
-        isAlarmLoopRunning = false
-        synchronized(alarmMessageQueue) { alarmMessageQueue.clear() }
-        currentAlarmIndex = 0
-        if (this::tts.isInitialized) tts.stop()
-    }
-
+    private fun startSingleHookTimer(state: DeviceState) { if (state.singleHookTimer != null) return; state.singleHookTimer = Runnable { state.singleHookTimerExpired = true; state.singleHookTimer = null; evaluateOverallStatus() }; mainHandler.postDelayed(state.singleHookTimer!!, SINGLE_HOOK_TIMEOUT_MS) }
+    private fun cancelSingleHookTimer(state: DeviceState) { state.singleHookTimerExpired = false; state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }; state.singleHookTimer = null }
+    private fun stopAlarmCycle() { isAlarmLoopRunning = false; synchronized(alarmMessageQueue) { alarmMessageQueue.clear() }; currentAlarmIndex = 0; if (isTtsInitialized) tts.stop() }
     private fun playNextAlarmInQueue() {
         if (!isAlarmLoopRunning || isMuted || !isTtsInitialized) return
-        var messageToSpeak: String? = null
-        synchronized(alarmMessageQueue) {
-            if (alarmMessageQueue.isEmpty()) {
-                isAlarmLoopRunning = false
-                return
-            }
-            if (currentAlarmIndex >= alarmMessageQueue.size) currentAlarmIndex = 0
-            messageToSpeak = alarmMessageQueue[currentAlarmIndex]
-            currentAlarmIndex++
-        }
-        messageToSpeak?.let {
-            triggerVibration()
-            val params = Bundle()
-            params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, ALARM_UTTERANCE_ID)
-            tts.speak(it, TextToSpeech.QUEUE_FLUSH, params, ALARM_UTTERANCE_ID)
-        }
+        val msg = synchronized(alarmMessageQueue) { if (alarmMessageQueue.isEmpty()) { isAlarmLoopRunning = false; return }; if (currentAlarmIndex >= alarmMessageQueue.size) currentAlarmIndex = 0; alarmMessageQueue[currentAlarmIndex++] }
+        triggerVibration(); val params = Bundle().apply { putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, ALARM_UTTERANCE_ID) }; tts.speak(msg, TextToSpeech.QUEUE_FLUSH, params, ALARM_UTTERANCE_ID)
     }
 
     private fun updateAlarmQueueAndCycle() {
-        val newAlarmMessages = deviceStates.values
-            .filter { it.sensorStatus == SensorStatus.ALARM }
-            .mapNotNull { SENSOR_TYPE_NAMES[it.sensorType]?.plus(" 异常") }
-
-        val shouldStartNow = !isAlarmLoopRunning && newAlarmMessages.isNotEmpty()
-
-        synchronized(alarmMessageQueue) {
-            val hadAlarmsBefore = alarmMessageQueue.isNotEmpty()
-            alarmMessageQueue.clear()
-            alarmMessageQueue.addAll(newAlarmMessages)
-            isAlarmLoopRunning = alarmMessageQueue.isNotEmpty()
-
-            // If we just added the first alarm, show the dialog
-            if (!hadAlarmsBefore && isAlarmLoopRunning) {
-                 val intent = Intent(ACTION_SHOW_ALARM_DIALOG).apply {
-                    putStringArrayListExtra(EXTRA_ALARM_MESSAGES, ArrayList(newAlarmMessages))
-                }
-                LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-            }
-        }
-
-        if (shouldStartNow) {
-            currentAlarmIndex = 0
-            playNextAlarmInQueue()
-        } else if (!isAlarmLoopRunning) {
-            stopAlarmCycle()
-        }
+        val newMsgs = deviceStates.values.filter { it.sensorStatus == SensorStatus.ALARM }.mapNotNull { SENSOR_TYPE_NAMES[it.sensorType]?.plus(" 异常") }
+        val shouldStart = !isAlarmLoopRunning && newMsgs.isNotEmpty()
+        synchronized(alarmMessageQueue) { val had = alarmMessageQueue.isNotEmpty(); alarmMessageQueue.clear(); alarmMessageQueue.addAll(newMsgs); isAlarmLoopRunning = alarmMessageQueue.isNotEmpty(); if (!had && isAlarmLoopRunning) LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SHOW_ALARM_DIALOG).apply { putStringArrayListExtra(EXTRA_ALARM_MESSAGES, ArrayList(newMsgs)) }) }
+        if (shouldStart) { currentAlarmIndex = 0; playNextAlarmInQueue() } else if (!isAlarmLoopRunning) stopAlarmCycle()
     }
 
-    // --- Data Parsing & Cloud Interaction ---
-
-    private fun parseHeartbeatData(data: ByteArray): HeartbeatInfo? {
-        if (data.size != 5 || data[4] != data.slice(0..3).sumOf { it.toInt() and 0xFF }.toByte()) return null
-        val sensorIdHex = String.format("%04X", ((data[2].toInt() and 0xFF) shl 8) or (data[1].toInt() and 0xFF))
-        val batteryStatus = when (val byte = data[3].toInt() and 0xFF) {
-            0xFF -> "充电中"
-            in 0..100 -> "$byte%"
-            else -> "未知"
-        }
-        return HeartbeatInfo(sensorIdHex, batteryStatus)
-    }
-
-    private fun parseSensorData(data: ByteArray): ParsedSensorData? {
-        if (data.size != 6 || data[5] != data.slice(0..4).sumOf { it.toInt() and 0xFF }.toByte()) return null
-        val sensorType = data[1].toInt() and 0xFF
-        if (sensorType !in 1..6) return null
-        val isAbnormal = (data[4].toInt() and 0xFF) == 1
-        return ParsedSensorData(sensorType, isAbnormal)
-    }
-
+    private fun parseHeartbeatData(data: ByteArray): HeartbeatInfo? { if (data.size != 5 || data[4] != data.slice(0..3).sumOf { it.toInt() and 0xFF }.toByte()) return null; val id = String.format("%04X", ((data[2].toInt() and 0xFF) shl 8) or (data[1].toInt() and 0xFF)); val bat = when (val b = data[3].toInt() and 0xFF) { 0xFF -> "充电中"; in 0..100 -> "$b%"; else -> "未知" }; return HeartbeatInfo(id, bat) }
+    private fun parseSensorData(data: ByteArray): ParsedSensorData? { if (data.size != 6 || data[5] != data.slice(0..4).sumOf { it.toInt() and 0xFF }.toByte()) return null; val type = data[1].toInt() and 0xFF; if (type !in 1..6) return null; return ParsedSensorData(type, (data[4].toInt() and 0xFF) == 1) }
     private fun logAlarmToCloud(deviceAddress: String, sensorType: Int?) {
-        if (currentSessionId.isNullOrEmpty() || sensorType == null) return
-        val currentUser = LCUser.getCurrentUser() ?: return
-        AlarmEvent().apply {
-            this.sessionId = currentSessionId!!
-            this.worker = currentUser
-            this.deviceAddress = deviceAddress
-            this.sensorType = sensorType
-            this.alarmType = "异常"
-            this.timestamp = Date()
-        }.saveInBackground().subscribe(object : Observer<LCObject> {
-            override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
-            override fun onNext(t: LCObject) { Log.d(TAG, "Successfully saved AlarmEvent.") }
-            override fun onError(e: Throwable) { Log.e(TAG, "Failed to save AlarmEvent.", e) }
-            override fun onComplete() {}
-        })
+        val sid = currentSessionId ?: return
+        val user = LCUser.getCurrentUser() ?: return
+        AlarmEvent().apply { this.sessionId = sid; this.worker = user; this.deviceAddress = deviceAddress; this.sensorType = sensorType ?: 0; this.alarmType = "异常"; this.timestamp = Date() }.saveInBackground().subscribe(object : Observer<LCObject> { override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) } override fun onNext(t: LCObject) {} override fun onError(e: Throwable) {} override fun onComplete() {} })
     }
 
     private fun updateWorkSession(status: String? = null, isOnline: Boolean? = null, partStatuses: Array<SensorStatus>? = null, shouldEndSession: Boolean = false) {
-        if (currentSessionId.isNullOrEmpty()) return
-        val sessionToUpdate = LCObject.createWithoutData("WorkSession", currentSessionId!!)
-        var shouldSave = false
-
-        status?.let {
-            sessionToUpdate.put("currentStatus", it)
-            if (it == "异常") sessionToUpdate.increment("totalAlarmCount", 1)
-            shouldSave = true
-        }
-        isOnline?.let {
-            sessionToUpdate.put("isOnline", it)
-            shouldSave = true
-        }
-        if (shouldEndSession) {
-            sessionToUpdate.put("endTime", Date())
-            shouldSave = true
-        }
-        partStatuses?.let {
-            if (it.size == 6) {
-                for (i in it.indices) {
-                    val statusString = when (it[i]) {
-                        SensorStatus.NORMAL -> "正常"
-                        SensorStatus.SINGLE_HOOK -> "单挂"
-                        SensorStatus.ALARM -> "异常"
-                        SensorStatus.UNKNOWN -> "未连接"
-                    }
-                    sessionToUpdate.put("sensor${i + 1}Status", statusString)
-                }
-                shouldSave = true
-            }
-        }
-
-        if (shouldSave) {
-            sessionToUpdate.saveInBackground().subscribe(object : Observer<LCObject> {
-                override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
-                override fun onNext(t: LCObject) { Log.d(TAG, "Successfully updated WorkSession.") }
-                override fun onError(e: Throwable) { Log.e(TAG, "Failed to update WorkSession.", e) }
-                override fun onComplete() {}
-            })
-        }
+        val sid = currentSessionId ?: return
+        val session = LCObject.createWithoutData("WorkSession", sid)
+        var save = false
+        status?.let { session.put("currentStatus", it); if (it == "异常") session.increment("totalAlarmCount", 1); save = true }
+        isOnline?.let { session.put("isOnline", it); save = true }
+        if (shouldEndSession) { session.put("endTime", Date()); save = true }
+        partStatuses?.let { for (i in it.indices) { val s = when (it[i]) { SensorStatus.NORMAL -> "正常"; SensorStatus.SINGLE_HOOK -> "单挂"; SensorStatus.ALARM -> "异常"; else -> "未连接" }; session.put("sensor${i + 1}Status", s) }; save = true }
+        if (save) { if (shouldEndSession) try { session.saveEventually() } catch (e: Exception) {} else session.saveInBackground().subscribe(object : Observer<LCObject> { override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) } override fun onNext(t: LCObject) {} override fun onError(e: Throwable) {} override fun onComplete() {} }) }
     }
 
-    // --- Utility & Broadcast ---
-
-    private fun triggerVibration() {
-        if (isMuted) return
-        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            vibrator.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE))
-        } else {
-            @Suppress("DEPRECATION")
-            vibrator.vibrate(500)
-        }
-    }
-
-    private fun broadcastStatus(deviceAddress: String, text: String, color: String, showIcon: Boolean) {
-        val intent = Intent(ACTION_STATUS_UPDATE).apply {
-            putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
-            putExtra(EXTRA_TEXT, text)
-            putExtra(EXTRA_COLOR, color)
-            putExtra(EXTRA_SHOW_ICON, showIcon)
-        }
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-    }
-
-    private fun broadcastHeartbeat(deviceAddress: String, info: HeartbeatInfo) {
-        val intent = Intent(ACTION_HEARTBEAT_UPDATE).apply {
-            putExtra(EXTRA_SENSOR_ID, info.sensorIdHex)
-            putExtra(EXTRA_BATTERY, info.batteryStatus)
-        }
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-    }
-
-    private fun broadcastConnectionState(address: String, isConnected: Boolean) {
-        val intent = Intent(ACTION_CONNECTION_STATE_UPDATE).apply {
-            putExtra(EXTRA_DEVICE_ADDRESS, address)
-            putExtra(EXTRA_IS_CONNECTED, isConnected)
-        }
-        LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
-    }
-
-
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIFICATION_CHANNEL_ID,
-                "安全带后台服务",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
-    }
+    private fun triggerVibration() { if (isMuted) return; val v = getSystemService(VIBRATOR_SERVICE) as Vibrator; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) v.vibrate(VibrationEffect.createOneShot(500, VibrationEffect.DEFAULT_AMPLITUDE)) else v.vibrate(500) }
+    private fun broadcastStatus(deviceAddress: String, text: String, color: String, showIcon: Boolean) { LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_STATUS_UPDATE).apply { putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress); putExtra(EXTRA_TEXT, text); putExtra(EXTRA_COLOR, color); putExtra(EXTRA_SHOW_ICON, showIcon) }) }
+    private fun broadcastHeartbeat(deviceAddress: String, info: HeartbeatInfo) { LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_HEARTBEAT_UPDATE).apply { putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress); putExtra(EXTRA_SENSOR_ID, info.sensorIdHex); putExtra(EXTRA_BATTERY, info.batteryStatus) }) }
+    private fun broadcastConnectionState(address: String, isConnected: Boolean) { LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_CONNECTION_STATE_UPDATE).apply { putExtra(EXTRA_DEVICE_ADDRESS, address); putExtra(EXTRA_IS_CONNECTED, isConnected) }) }
+    private fun createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(NOTIFICATION_CHANNEL_ID, "安全带后台服务", NotificationManager.IMPORTANCE_DEFAULT)) }
 
     data class HeartbeatInfo(val sensorIdHex: String, val batteryStatus: String)
     data class ParsedSensorData(val sensorType: Int, val isAbnormal: Boolean)
 
     companion object {
+        @Volatile var currentSessionId: String? = null
         const val ACTION_CONNECT_DEVICES = "com.heyu.safetybeltoperators.ACTION_CONNECT_DEVICES"
         const val ACTION_DISCONNECT_ALL = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_ALL"
         const val ACTION_RETRY_CONNECTION = "com.heyu.safetybeltoperators.ACTION_RETRY_CONNECTION"
@@ -804,13 +485,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_DISCONNECT_SPECIFIC = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_SPECIFIC"
         const val ACTION_CONNECTION_STATE_UPDATE = "com.heyu.safetybeltoperators.ACTION_CONNECTION_STATE_UPDATE"
         const val ACTION_REQUEST_ALL_STATUSES = "com.heyu.safetybeltoperators.ACTION_REQUEST_ALL_STATUSES"
-
-
+        const val ACTION_SESSION_ENDED = "com.heyu.safetybeltoperators.ACTION_SESSION_ENDED"
         const val EXTRA_DEVICES = "com.heyu.safetybeltoperators.EXTRA_DEVICES"
         const val EXTRA_DEVICES_TO_DISCONNECT = "com.heyu.safetybeltoperators.EXTRA_DEVICES_TO_DISCONNECT"
         const val EXTRA_SESSION_ID = "com.heyu.safetybeltoperators.EXTRA_SESSION_ID"
         const val EXTRA_IS_CONNECTED = "com.heyu.safetybeltoperators.EXTRA_IS_CONNECTED"
-
         const val ACTION_STATUS_UPDATE = "com.heyu.safetybeltoperators.ACTION_STATUS_UPDATE"
         const val ACTION_HEARTBEAT_UPDATE = "com.heyu.safetybeltoperators.ACTION_HEARTBEAT_UPDATE"
         const val ACTION_SHOW_ALARM_DIALOG = "com.heyu.safetybeltoperators.ACTION_SHOW_ALARM_DIALOG"
@@ -821,27 +500,13 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_SENSOR_ID = "com.heyu.safetybeltoperators.EXTRA_SENSOR_ID"
         const val EXTRA_BATTERY = "com.heyu.safetybeltoperators.EXTRA_BATTERY"
         const val EXTRA_ALARM_MESSAGES = "com.heyu.safetybeltoperators.EXTRA_ALARM_MESSAGES"
-
-        private const val NOTIFICATION_CHANNEL_ID = "BleServiceChannel"
-        private const val NOTIFICATION_ID = 1
-        private const val TAG = "BleService"
-        private const val CONNECTION_TIMEOUT_MS = 30000L
-        private const val RECONNECT_DELAY_MS = 2000L
-        private const val MAX_RECONNECT_ATTEMPTS = 3
-        private const val SINGLE_HOOK_TIMEOUT_MS = 20000L
-        private const val MUTE_DURATION_MS = 60000L // 1 minute
-        private const val ALARM_UTTERANCE_ID = "com.heyu.safetybeltoperators.ALARM_CYCLE_UTTERANCE"
-
-        val HEARTBEAT_SERVICE_UUID: UUID = UUID.fromString("00001233-0000-1000-8000-00805f9b34fb")
-        val HEARTBEAT_CHARACTERISTIC_UUID: UUID = UUID.fromString("00001235-0000-1000-8000-00805f9b34fb")
-        val SENSOR_DATA_SERVICE_UUID: UUID = UUID.fromString("00005677-0000-1000-8000-00805f9b34fb")
-        val SENSOR_DATA_CHARACTERISTIC_UUID: UUID = UUID.fromString("00005679-0000-1000-8000-00805f9b34fb")
+        private const val NOTIFICATION_CHANNEL_ID = "BleServiceChannel"; private const val NOTIFICATION_ID = 1; private const val TAG = "BleService"
+        private const val CONNECTION_TIMEOUT_MS = 30000L; private const val RECONNECT_DELAY_MS = 2000L; private const val MAX_RECONNECT_ATTEMPTS = 3
+        private const val SINGLE_HOOK_TIMEOUT_MS = 20000L; private const val MUTE_DURATION_MS = 60000L; private const val ALARM_UTTERANCE_ID = "com.heyu.safetybeltoperators.ALARM_CYCLE_UTTERANCE"
+        val HEARTBEAT_SERVICE_UUID: UUID = UUID.fromString("00001233-0000-1000-8000-00805f9b34fb"); val HEARTBEAT_CHARACTERISTIC_UUID: UUID = UUID.fromString("00001235-0000-1000-8000-00805f9b34fb")
+        val SENSOR_DATA_SERVICE_UUID: UUID = UUID.fromString("00005677-0000-1000-8000-00805f9b34fb"); val SENSOR_DATA_CHARACTERISTIC_UUID: UUID = UUID.fromString("00005679-0000-1000-8000-00805f9b34fb")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
         val SENSOR_TYPE_NAMES = mapOf(1 to "后背绳高挂", 2 to "后背绳小钩", 3 to "围杆带环抱", 4 to "围杆带钩", 5 to "胸扣", 6 to "后背绳大钩")
-        val SINGLE_HOOK_COMBINATIONS = setOf(
-            setOf(0), setOf(1), setOf(2), setOf(3), setOf(5), // Single abnormalities
-            setOf(3, 5), setOf(1, 2), setOf(0, 2), setOf(0, 1) // Valid dual abnormalities
-        )
+        val SINGLE_HOOK_COMBINATIONS = setOf(setOf(0), setOf(1), setOf(2), setOf(3), setOf(5), setOf(3, 5), setOf(1, 2), setOf(0, 2), setOf(0, 1))
     }
 }

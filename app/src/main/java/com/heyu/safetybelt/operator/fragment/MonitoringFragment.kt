@@ -49,7 +49,6 @@ class MonitoringFragment : Fragment() {
     private val viewHolders = mutableMapOf<Int, DeviceViewHolder>()
     private val addressToTypeAndSlotMap = mutableMapOf<String, Pair<Int, Int>>()
 
-    private var startButton: Button? = null
     private var disconnectButton: Button? = null
 
     private var currentSessionId: String? = null
@@ -86,7 +85,6 @@ class MonitoringFragment : Fragment() {
                     val address = intent.getStringExtra(BleService.EXTRA_DEVICE_ADDRESS) ?: return
                     val typeAndSlot = addressToTypeAndSlotMap[address]
                     if (typeAndSlot == null) {
-                        // Log.w(TAG, "Received update for a device not in the current configuration: $address")
                         return
                     }
                     val (sensorType, slotIndex) = typeAndSlot
@@ -147,11 +145,8 @@ class MonitoringFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        if (view.tag == null) { // Only setup on first creation of the view
-            buildFullDeviceLayout()
-            setupButtons()
-            view.tag = "initialized"
-        }
+        buildFullDeviceLayout()
+        setupButtons()
 
         binding.backButton.setOnClickListener {
             parentFragmentManager.popBackStack()
@@ -184,12 +179,9 @@ class MonitoringFragment : Fragment() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // If the fragment is truly being destroyed (not just view recreation), then we can consider cleanup.
-        // However, with the current hot-plug logic, we want the service to live on.
         compositeDisposable.clear()
     }
 
-    // --- Core Hot-plug Logic ---
     fun updateDevices(newDevices: List<DeviceScanResult>) {
         if (!isAdded) return
 
@@ -200,14 +192,6 @@ class MonitoringFragment : Fragment() {
         val devicesToAdd = newDeviceMap.filter { it.key !in oldDeviceMap.keys }.values.toList()
 
         if (devicesToRemove.isNotEmpty()) {
-            Log.d(TAG, "Removing devices: $devicesToRemove")
-            val intent = Intent(requireContext(), BleService::class.java).apply {
-                action = BleService.ACTION_DISCONNECT_SPECIFIC
-                putStringArrayListExtra(BleService.EXTRA_DEVICES_TO_DISCONNECT, ArrayList(devicesToRemove))
-            }
-            requireContext().startService(intent)
-
-            // Update UI immediately for removed devices
             devicesToRemove.forEach { address ->
                 configuredDevices.remove(address)
                 val typeAndSlot = addressToTypeAndSlotMap.remove(address)
@@ -219,26 +203,14 @@ class MonitoringFragment : Fragment() {
         }
 
         if (devicesToAdd.isNotEmpty()) {
-            Log.d(TAG, "Adding devices: ${devicesToAdd.map { it.deviceAddress }}")
-            val intent = Intent(requireContext(), BleService::class.java).apply {
-                action = BleService.ACTION_CONNECT_SPECIFIC
-                putParcelableArrayListExtra(BleService.EXTRA_DEVICES, ArrayList(devicesToAdd))
-            }
-            requireContext().startService(intent)
-
-            // Update UI for new devices
             devicesToAdd.forEach { device ->
                 configuredDevices[device.deviceAddress] = device
                 val sensorType = getSensorTypeFromDeviceName(device.bestName)
                 if (sensorType != null) {
-                    addressToTypeAndSlotMap[device.deviceAddress] = sensorType to 0 // Assuming one device per type
+                    addressToTypeAndSlotMap[device.deviceAddress] = sensorType to 0 
                     updateDeviceRow(sensorType, device)
                 }
             }
-        }
-
-        if (devicesToAdd.isNotEmpty() || devicesToRemove.isNotEmpty()) {
-            Toast.makeText(requireContext(), "设备列表已更新", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -271,10 +243,6 @@ class MonitoringFragment : Fragment() {
 
     private fun buildFullDeviceLayout() {
         val passedDevices = getAllDevicesFromArgs()
-        if (passedDevices.isEmpty()) {
-            displayEmptyDeviceMessage()
-            return
-        }
         val deviceMap = passedDevices.associateBy { it.deviceAddress }
         configuredDevices.clear()
         configuredDevices.putAll(deviceMap)
@@ -285,15 +253,10 @@ class MonitoringFragment : Fragment() {
         addressToTypeAndSlotMap.clear()
 
         for (sensorType in 1..6) {
-            // Find a device matching this sensor type from the initial list.
             val deviceForType = configuredDevices.values.find { getSensorTypeFromDeviceName(it.bestName) == sensorType }
-
-            // Create a row for every possible sensor type.
             addDeviceRow(sensorType, deviceForType)
-
-            // If a device was found, map its address for quick lookups.
             if (deviceForType != null) {
-                addressToTypeAndSlotMap[deviceForType.deviceAddress] = sensorType to 0 // Assuming one device per type for now
+                addressToTypeAndSlotMap[deviceForType.deviceAddress] = sensorType to 0 
             }
         }
     }
@@ -313,7 +276,6 @@ class MonitoringFragment : Fragment() {
         binding.scrollableDataContainer.addView(rowView)
         viewHolders[sensorType] = DeviceViewHolder(nameView, slot1VH)
 
-        // Update the content of the newly created row
         updateDeviceRow(sensorType, device)
     }
 
@@ -330,101 +292,24 @@ class MonitoringFragment : Fragment() {
             slot1VH.statusView.text = "未配置"
             slot1VH.statusView.setTextColor(Color.LTGRAY)
         }
-        // Reset any visual state
         updateStatusView(sensorType, 0, slot1VH.statusView.text.toString(), slot1VH.statusView.currentTextColor, false)
     }
 
     private fun setupButtons() {
-        if (configuredDevices.isEmpty() && getAllDevicesFromArgs().isEmpty()) {
-            displayEmptyDeviceMessage()
-            return
-        }
-
         val buttonContainer = binding.buttonContainerLayout
+        buttonContainer.removeAllViews()
 
-        val startButtonDrawable = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.parseColor("#2196F3")); cornerRadius = 50f }
         val disconnectButtonDrawable = GradientDrawable().apply { shape = GradientDrawable.RECTANGLE; setColor(Color.parseColor("#9E9E9E")); cornerRadius = 50f }
-
-        startButton = Button(requireContext()).apply {
-            text = "开始连接"
-            background = startButtonDrawable
-            setTextColor(Color.WHITE)
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER }
-            setOnClickListener {
-                it.visibility = View.GONE
-                disconnectButton?.visibility = View.VISIBLE
-                Toast.makeText(requireContext(), "正在启动云端作业...", Toast.LENGTH_SHORT).show()
-
-                WorkRecordManager.startNewWork(requireContext())
-                currentSessionAlarmCount = 0
-
-                startWorkSession(
-                    onSessionStarted = { sessionId ->
-                        currentSessionId = sessionId
-                        val allDevices = ArrayList(configuredDevices.values)
-                        val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
-                            action = BleService.ACTION_CONNECT_DEVICES
-                            putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allDevices)
-                            putExtra(BleService.EXTRA_SESSION_ID, currentSessionId)
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            requireContext().startForegroundService(serviceIntent)
-                        } else {
-                            requireContext().startService(serviceIntent)
-                        }
-                        configuredDevices.keys.forEach { address ->
-                            addressToTypeAndSlotMap[address]?.let { (type, slot) ->
-                                updateStatusView(type, slot, "连接中...", Color.BLUE, true)
-                            } 
-                        }
-                        Toast.makeText(requireContext(), "云端作业已启动，正在连接设备。", Toast.LENGTH_SHORT).show()
-                    },
-                    onSessionFailed = { error ->
-                        activity?.runOnUiThread {
-                            Toast.makeText(requireContext(), "启动云端作业失败: ${error.message}", Toast.LENGTH_LONG).show()
-                            handleDisconnectUI()
-                        }
-                    }
-                )
-            }
-        }
 
         disconnectButton = Button(requireContext()).apply {
             text = "断开所有连接"
-            visibility = View.GONE
             background = disconnectButtonDrawable
             setTextColor(Color.WHITE)
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.CENTER }
             setOnClickListener { showDisconnectConfirmationDialog() }
         }
 
-        buttonContainer.addView(startButton)
         buttonContainer.addView(disconnectButton)
-    }
-
-    private fun startWorkSession(onSessionStarted: (sessionId: String) -> Unit, onSessionFailed: (error: Throwable) -> Unit) {
-        val workerObjectId = (activity as? MainActivityOperator)?.workerObjectId
-        if (workerObjectId == null) {
-            onSessionFailed(IllegalStateException("未能获取到工人ID，请重新登录或重启应用。"))
-            return
-        }
-
-        val deviceNameList = configuredDevices.values.map { it.bestName }
-        val workSession = WorkSession().apply {
-            put("worker", LCObject.createWithoutData("Worker", workerObjectId))
-            startTime = Date()
-            totalAlarmCount = 0
-            isOnline = true
-            currentStatus = "正在连接"
-            put("deviceList", deviceNameList)
-        }
-
-        workSession.saveInBackground().subscribe(object : io.reactivex.Observer<LCObject> {
-            override fun onSubscribe(d: io.reactivex.disposables.Disposable) { compositeDisposable.add(d) }
-            override fun onNext(t: LCObject) { onSessionStarted(t.objectId) }
-            override fun onError(e: Throwable) { onSessionFailed(e) }
-            override fun onComplete() {}
-        })
     }
 
     private fun showDisconnectConfirmationDialog() {
@@ -432,13 +317,20 @@ class MonitoringFragment : Fragment() {
             .setTitle("断开所有连接")
             .setMessage("您确定要断开所有设备的连接吗？这将结束本次工作记录。")
             .setPositiveButton("确定") { _, _ ->
-                val serviceIntent = Intent(requireContext(), BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
-                requireContext().startService(serviceIntent)
+                // 立即触发返回逻辑，提高响应感知速度
+                parentFragmentManager.popBackStack()
 
-                WorkRecordManager.stopCurrentWork(requireContext(), currentSessionAlarmCount)
+                // 在后台执行断开连接和保存记录的操作，使用 ApplicationContext 防止 Fragment 销毁导致 Context 失效
+                val appContext = requireContext().applicationContext
+                val serviceIntent = Intent(appContext, BleService::class.java).apply { action = BleService.ACTION_DISCONNECT_ALL }
+                appContext.startService(serviceIntent)
+
+                // 异步处理耗时的磁盘操作（如果有必要，WorkRecordManager 内部也可以改为异步）
+                Thread {
+                    WorkRecordManager.stopCurrentWork(appContext, currentSessionAlarmCount)
+                }.start()
+                
                 alarmingDevices.clear()
-                handleDisconnectUI()
-                parentFragmentManager.popBackStack() // Go back to detection screen
             }
             .setNegativeButton("取消", null)
             .show()
@@ -447,16 +339,12 @@ class MonitoringFragment : Fragment() {
     private fun showAlarmDialog(messages: List<String>) {
         if (!isAdded || messages.isEmpty()) return
         isAlarmDialogShowing = true
-
         val messageText = messages.joinToString("\n")
-
         AlertDialog.Builder(requireContext())
             .setTitle("安全警报")
             .setMessage(messageText)
             .setIcon(R.drawable.ic_dialog_warning)
-            .setPositiveButton("我已知晓") { dialog, _ ->
-                dialog.dismiss()
-            }
+            .setPositiveButton("我已知晓") { dialog, _ -> dialog.dismiss() }
             .setOnDismissListener { isAlarmDialogShowing = false }
             .show()
     }
@@ -464,7 +352,6 @@ class MonitoringFragment : Fragment() {
     private fun showAdminAlertDialog() {
         if (!isAdded || isAdminAlarmDialogShowing) return
         isAdminAlarmDialogShowing = true
-
         AlertDialog.Builder(requireContext())
             .setTitle("远程警报")
             .setMessage("安监员向您发送了警报提醒，请立即检查安全带！")
@@ -486,7 +373,6 @@ class MonitoringFragment : Fragment() {
              }
         }
         disconnectButton?.visibility = View.GONE
-        startButton?.visibility = View.VISIBLE
     }
 
     private fun updateStatusView(sensorType: Int, slotIndex: Int, text: String, color: Int, showIcon: Boolean) {
@@ -543,12 +429,4 @@ class MonitoringFragment : Fragment() {
 
     private fun getSensorTypeFromDeviceName(deviceName: String): Int? = deviceName.split(" ").getOrNull(1)?.split("_")?.getOrNull(0)?.toIntOrNull()
     private fun getAllDevicesFromArgs(): List<DeviceScanResult> = arguments?.getParcelableArrayList<DeviceScanResult>("hbs_devices")?.plus(arguments?.getParcelableArrayList("wgd_devices") ?: emptyList())?.plus(arguments?.getParcelableArrayList("xyk_devices") ?: emptyList()) ?: emptyList()
-    private fun displayEmptyDeviceMessage() {
-        binding.tableBodyContainer.addView(TextView(requireContext()).apply {
-            text = "未选择任何设备"
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
-            setPadding(64, 64, 64, 64)
-        })
-    }
 }
