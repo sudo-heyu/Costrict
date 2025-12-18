@@ -75,17 +75,6 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent">
 
-            <!-- 报警按钮 -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/button_send_alert"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:contentDescription="发送远程报警"
-                app:icon="@android:drawable/stat_notify_error"
-                app:iconSize="24dp"
-                app:iconTint="@color/status_danger" />
-
             <!-- 状态区域 -->
             <LinearLayout
                 android:id="@+id/status_layout"
@@ -94,20 +83,53 @@
                 android:gravity="end"
                 android:orientation="vertical">
 
-                <com.google.android.material.chip.Chip
-                    android:id="@+id/status_chip"
+                <LinearLayout
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:clickable="false"
-                    android:minHeight="32dp"
-                    android:textColor="@color/white"
-                    app:chipBackgroundColor="@color/status_normal"
-                    app:chipCornerRadius="16dp"
-                    app:chipMinHeight="32dp"
-                    app:ensureMinTouchTargetSize="false"
-                    app:textEndPadding="8dp"
-                    app:textStartPadding="8dp"
-                    tools:text="正常" />
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+                    
+                    <!-- 报警按钮：极致紧凑优化 -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/button_send_alert"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="4dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:text="示警"
+                        android:textColor="@color/status_danger"
+                        android:textSize="12sp"
+                        app:cornerRadius="16dp"
+                        app:strokeColor="@color/status_danger"
+                        app:strokeWidth="1dp"
+                        app:icon="@android:drawable/stat_notify_error"
+                        app:iconSize="12sp"
+                        app:iconTint="@color/status_danger"
+                        app:iconPadding="2dp"
+                        app:iconGravity="textStart"
+                        />
+
+                    <com.google.android.material.chip.Chip
+                        android:id="@+id/status_chip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:minHeight="32dp"
+                        android:textColor="@color/white"
+                        app:chipBackgroundColor="@color/status_normal"
+                        app:chipCornerRadius="16dp"
+                        app:chipMinHeight="32dp"
+                        app:ensureMinTouchTargetSize="false"
+                        app:textEndPadding="8dp"
+                        app:textStartPadding="8dp"
+                        tools:text="正常" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/last_updated_text"
