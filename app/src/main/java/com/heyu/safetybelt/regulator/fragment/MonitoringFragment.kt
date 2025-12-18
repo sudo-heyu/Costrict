@@ -79,10 +79,7 @@ class MonitoringFragment : Fragment(), UnderService.WorkerListListener {
         // Setup Toolbar
         binding.toolbar.setOnMenuItemClickListener { menuItem ->
             when (menuItem.itemId) {
-                R.id.action_add_worker -> {
-                    showAddWorkerDialog()
-                    true
-                }
+                // Removed action_add_worker handling as requested
                 R.id.action_clear_all -> {
                     showRemoveAllWorkersDialog()
                     true

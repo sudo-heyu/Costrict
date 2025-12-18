@@ -1,13 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
-    <!-- 添加工人已有 FAB，这里作为备选入口，或者您可以选择移除 -->
-    <item
-        android:id="@+id/action_add_worker"
-        android:title="添加工人"
-        android:icon="@android:drawable/ic_menu_add"
-        app:showAsAction="ifRoom" />
-
+    <!-- 仅保留清除所有，添加工人通过右下角 FAB 进行 -->
     <item
         android:id="@+id/action_clear_all"
         android:title="清除所有工人"

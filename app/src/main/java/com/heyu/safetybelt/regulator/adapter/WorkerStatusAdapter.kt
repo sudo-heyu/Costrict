@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import cn.leancloud.LCObject
 import cn.leancloud.LCQuery
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.chip.Chip
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.heyu.safetybelt.R
@@ -45,7 +46,7 @@ class WorkerStatusAdapter(
         val statusChip: Chip = view.findViewById(R.id.status_chip)
         val lastUpdated: TextView = view.findViewById(R.id.last_updated_text)
         val avatarIcon: ImageView = view.findViewById(R.id.avatar_icon)
-        val sendAlertButton: Button = view.findViewById(R.id.button_send_alert)
+        val sendAlertButton: MaterialButton = view.findViewById(R.id.button_send_alert)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -61,7 +62,9 @@ class WorkerStatusAdapter(
         holder.workerName.text = workerStatus.workerName
         holder.workerNumber.text = "工号: ${workerStatus.workerNumber}"
 
-        val isOnline = workerStatus.status != "离线"
+        // Define valid online statuses explicitly
+        val onlineStatuses = setOf("正常", "在线-正常", "单挂", "异常")
+        val isRealOnline = workerStatus.status in onlineStatuses
 
         // 根据状态设置 Chip 的颜色和文字
         holder.statusChip.text = workerStatus.status
@@ -71,6 +74,7 @@ class WorkerStatusAdapter(
         val colorDanger = ContextCompat.getColor(context, R.color.status_danger)
         val colorOffline = ContextCompat.getColor(context, R.color.status_offline)
         val colorWhite = ContextCompat.getColor(context, R.color.white)
+        val colorGray = Color.GRAY
 
         when (workerStatus.status) {
             "正常", "在线-正常" -> {
@@ -89,6 +93,7 @@ class WorkerStatusAdapter(
                 holder.avatarIcon.imageTintList = ColorStateList.valueOf(colorDanger)
             }
             else -> {
+                // Any other status is treated as Offline visually
                 holder.statusChip.text = "离线"
                 holder.statusChip.chipBackgroundColor = ColorStateList.valueOf(colorOffline)
                 holder.avatarIcon.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#F5F5F5")) // 浅灰背景
@@ -98,11 +103,29 @@ class WorkerStatusAdapter(
         
         holder.statusChip.setTextColor(colorWhite)
 
+        // Alert Button Logic
+        // Enable ONLY if truly online AND abnormal/warning
+        val isAbnormal = workerStatus.status == "单挂" || workerStatus.status == "异常"
+        
+        if (isRealOnline && isAbnormal) {
+            // Online and Abnormal/Warning: Red and Enabled
+            holder.sendAlertButton.isEnabled = true
+            holder.sendAlertButton.strokeColor = ColorStateList.valueOf(colorDanger)
+            holder.sendAlertButton.setTextColor(colorDanger)
+            holder.sendAlertButton.iconTint = ColorStateList.valueOf(colorDanger)
+        } else {
+            // Offline OR Normal OR Unknown: Gray and Disabled
+            holder.sendAlertButton.isEnabled = false
+            holder.sendAlertButton.strokeColor = ColorStateList.valueOf(colorGray)
+            holder.sendAlertButton.setTextColor(colorGray)
+            holder.sendAlertButton.iconTint = ColorStateList.valueOf(colorGray)
+        }
+
         // 计时器逻辑
         timers[holder]?.let { handler.removeCallbacks(it) }
         timers.remove(holder)
 
-        if (isOnline && workerStatus.lastUpdatedAt != null) {
+        if (isRealOnline && workerStatus.lastUpdatedAt != null) {
             val startTime = workerStatus.lastUpdatedAt.time
             val timerRunnable = object : Runnable {
                 override fun run() {
@@ -127,7 +150,6 @@ class WorkerStatusAdapter(
         }
 
         // Set OnClickListener for the alert button
-        holder.sendAlertButton.isEnabled = workerStatus.isOnline
         holder.sendAlertButton.setOnClickListener {
             sendAdminAlert(workerStatus, holder.sendAlertButton)
         }
@@ -147,13 +169,15 @@ class WorkerStatusAdapter(
                 override fun onNext(t: LCObject) {
                     handler.post {
                         Toast.makeText(context, "报警指令已发送给 ${workerStatus.workerName}", Toast.LENGTH_SHORT).show()
-                        handler.postDelayed({ button.isEnabled = workerStatus.isOnline }, 2000)
+                        // Re-enable only if still online and abnormal (check status again if possible, or just delay)
+                        // Simple logic: re-enable after delay if it was enabled before
+                        handler.postDelayed({ button.isEnabled = true }, 2000) 
                     }
                 }
                 override fun onError(e: Throwable) {
                     handler.post {
                         Toast.makeText(context, "发送失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                        button.isEnabled = workerStatus.isOnline
+                        button.isEnabled = true
                     }
                 }
                 override fun onComplete() {}
