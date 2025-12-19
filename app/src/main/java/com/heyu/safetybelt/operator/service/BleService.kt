@@ -189,7 +189,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             val latch = CountDownLatch(1)
             Thread {
                 try {
-                    endSessionSynchronously("离线")
+                    endSessionInternal("离线", true)
                     Log.d(TAG, "Final session update completed successfully")
                 } catch (e: Exception) {
                     Log.e(TAG, "Final session update error: ${e.message}")
@@ -199,7 +199,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }.start()
 
             try {
-                // 阻塞主线程最多 3.5 秒，强制给网络请求留出发送时间
                 if (!latch.await(3500, TimeUnit.MILLISECONDS)) {
                     Log.w(TAG, "Final session update timed out")
                 }
@@ -213,36 +212,42 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         stopSelf()
     }
 
-    private fun endSessionSynchronously(statusText: String) {
+    private fun endSessionInternal(statusText: String, isBlocking: Boolean) {
         val sid = currentSessionId ?: return
-        Log.d(TAG, "Attempting to end session $sid synchronously with status: $statusText")
+        Log.d(TAG, "Ending session $sid with status: $statusText, blocking: $isBlocking")
         
-        // 1. 更新 WorkSession 表 (云端)
         val session = LCObject.createWithoutData("WorkSession", sid)
         session.put("currentStatus", statusText)
         session.put("isOnline", false)
         session.put("endTime", Date())
         for (i in 1..6) session.put("sensor${i}Status", "未连接")
         
-        // 2. 更新 User 表的 isOnline 状态 (云端)
         val user = LCUser.getCurrentUser()
         user?.put("isOnline", false)
         
-        try {
-            // 第一重保险：saveEventually 将修改存入本地数据库
-            session.saveEventually()
-            user?.saveEventually()
-            
-            // 第二重保险：阻塞式 save() 确保立即上传
-            session.save()
-            Log.d(TAG, "WorkSession $sid updated successfully in cloud")
-            
-            user?.save()
-            Log.d(TAG, "User ${user?.objectId} isOnline set to false successfully in cloud")
-        } catch (e: Exception) {
-            Log.e(TAG, "Final sync save failed, relying on saveEventually. Error: ${e.message}")
+        if (isBlocking) {
+            try {
+                session.saveEventually()
+                user?.saveEventually()
+                session.save()
+                user?.save()
+            } catch (e: Exception) {
+                Log.e(TAG, "Sync save failed: ${e.message}")
+            }
+        } else {
+            session.saveInBackground().subscribe(object : Observer<LCObject> {
+                override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
+                override fun onNext(t: LCObject) {}
+                override fun onError(e: Throwable) { Log.e(TAG, "Async session save failed: ${e.message}") }
+                override fun onComplete() {}
+            })
+            user?.saveInBackground()?.subscribe(object : Observer<LCObject> {
+                override fun onSubscribe(d: Disposable) { compositeDisposable.add(d) }
+                override fun onNext(t: LCObject) {}
+                override fun onError(e: Throwable) {}
+                override fun onComplete() {}
+            })
         }
-        
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SESSION_ENDED))
     }
 
@@ -303,7 +308,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     private fun disconnectAllDevices(isManual: Boolean) {
         val addresses = deviceStates.keys.toList()
-        if (isManual && !currentSessionId.isNullOrEmpty()) endSessionSynchronously("手动断开")
+        if (isManual && !currentSessionId.isNullOrEmpty()) {
+            endSessionInternal("手动断开", false)
+        }
         cleanupConnectionsAndState(true)
         stopLiveQuery()
         if (isManual) addresses.forEach { broadcastStatus(it, "待连接", "GRAY", false) }
@@ -337,7 +344,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     private fun checkAllDevicesDisconnected() {
         val hasAnyActive = deviceStates.values.any { it.connectionStatus == ConnectionStatus.CONNECTED || it.connectionStatus == ConnectionStatus.CONNECTING || it.connectionStatus == ConnectionStatus.RECONNECTING }
         if (!hasAnyActive && !currentSessionId.isNullOrEmpty()) {
-            endSessionSynchronously(if (deviceStates.isEmpty()) "设备离线" else "设备失联")
+            endSessionInternal(if (deviceStates.isEmpty()) "设备离线" else "设备失联", false)
             cleanupConnectionsAndState(true); stopLiveQuery(); stopSelf()
         }
     }
