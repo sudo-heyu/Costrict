@@ -400,7 +400,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     private fun processNextSubscription(address: String) {
         val state = deviceStates[address] ?: return
-        val char = state.subscriptionQueue.poll() ?: run { broadcastStatus(address, "已就绪", "GREEN", false); return }
+        val char = state.subscriptionQueue.poll() ?: run { broadcastStatus(address, "正常", "GREEN", true); return }
         state.gatt?.setCharacteristicNotification(char, true)
         mainHandler.postDelayed({
             char.getDescriptor(CCCD_UUID)?.let { it.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; state.gatt?.writeDescriptor(it) }

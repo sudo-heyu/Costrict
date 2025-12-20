@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 class WorkHistoryAdapter(private var workSessions: List<LCObject>) : RecyclerView.Adapter<WorkHistoryAdapter.ViewHolder>() {
 
     private val dateFormatter = SimpleDateFormat("yyyy年M月d日", Locale.getDefault())
-    private val timeFormatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val timeFormatter = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val dateText: TextView = view.findViewById(R.id.history_date_text)
@@ -43,39 +43,48 @@ class WorkHistoryAdapter(private var workSessions: List<LCObject>) : RecyclerVie
 
         val hasDeviceAlert = totalAlarmCount > 0
 
-        // Set Date and Times
+        // 1. 设置日期
         holder.dateText.text = startTime?.let { dateFormatter.format(it) } ?: "日期未知"
-        holder.startTimeText.text = context.getString(R.string.work_history_start_time, startTime?.let { timeFormatter.format(it) } ?: "--:--")
-        holder.endTimeText.text = context.getString(R.string.work_history_end_time, endTime?.let { timeFormatter.format(it) } ?: "进行中")
+        
+        // 2. 设置开始时间 (强制使用 HH:mm:ss)
+        val startStr = startTime?.let { timeFormatter.format(it) } ?: "--:--:--"
+        holder.startTimeText.text = "开始: $startStr"
 
-        // Set Duration
-        if (startTime != null && endTime != null) {
-            if (endTime.after(startTime)) {
-                val durationMillis = endTime.time - startTime.time
-                val hours = TimeUnit.MILLISECONDS.toHours(durationMillis)
-                val minutes = TimeUnit.MILLISECONDS.toMinutes(durationMillis) % 60
-                holder.durationText.text = context.getString(R.string.work_history_duration, hours, minutes)
+        // 3. 设置结束时间 (强制使用 HH:mm:ss)
+        val endStr = endTime?.let { timeFormatter.format(it) } ?: "进行中"
+        holder.endTimeText.text = "结束: $endStr"
+
+        // 4. 计算并显示时长
+        val effectiveEndTime = endTime ?: Date()
+        if (startTime != null) {
+            val durationMillis = effectiveEndTime.time - startTime.time
+            if (durationMillis >= 0) {
+                val totalSeconds = durationMillis / 1000
+                val hours = totalSeconds / 3600
+                val minutes = (totalSeconds % 3600) / 60
+                val seconds = totalSeconds % 60
+
+                val durationTextValue = when {
+                    hours > 0 -> "${hours}小时${minutes}分钟${seconds}秒"
+                    minutes > 0 -> "${minutes}分钟${seconds}秒"
+                    else -> "${seconds}秒"
+                }
+                holder.durationText.text = "时长: $durationTextValue"
             } else {
-                holder.durationText.text = context.getString(R.string.work_history_duration_unknown)
+                holder.durationText.text = "时长: 0秒"
             }
-        } else if (startTime != null) {
-            val durationMillis = System.currentTimeMillis() - startTime.time
-            val hours = TimeUnit.MILLISECONDS.toHours(durationMillis)
-            val minutes = TimeUnit.MILLISECONDS.toMinutes(durationMillis) % 60
-            holder.durationText.text = context.getString(R.string.work_history_duration, hours, minutes)
         } else {
-            holder.durationText.text = context.getString(R.string.work_history_duration_unknown)
+            holder.durationText.text = "时长: 未知"
         }
 
-        // Set Device Alert
-        holder.deviceAlertText.text = context.getString(R.string.work_history_device_alert, if (hasDeviceAlert) "是" else "否")
+        // 5. 报警状态
+        holder.deviceAlertText.text = "发生报警: " + (if (hasDeviceAlert) "是" else "否")
         holder.deviceAlertText.setTextColor(
             if (hasDeviceAlert) ContextCompat.getColor(context, R.color.status_danger)
             else ContextCompat.getColor(context, R.color.text_secondary)
         )
 
-        // Set Admin Alert
-        holder.adminAlertText.text = context.getString(R.string.work_history_admin_alert, if (isAdminAlert) "是" else "否")
+        holder.adminAlertText.text = "远程报警: " + (if (isAdminAlert) "是" else "否")
         holder.adminAlertText.setTextColor(
             if (isAdminAlert) ContextCompat.getColor(context, R.color.status_danger)
             else ContextCompat.getColor(context, R.color.text_secondary)
