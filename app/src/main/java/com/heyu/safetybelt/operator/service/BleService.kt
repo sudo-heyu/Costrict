@@ -668,7 +668,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     private fun processNextSubscription(address: String) {
         val state = deviceStates[address] ?: return
         val char = state.subscriptionQueue.poll() ?: run {
-            broadcastStatus(address, "已就绪", "GREEN", false)
+            broadcastStatus(address, "正常", "GREEN", false)
             return
         }
         state.gatt?.setCharacteristicNotification(char, true)
