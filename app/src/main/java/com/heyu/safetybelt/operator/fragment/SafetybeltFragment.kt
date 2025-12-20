@@ -27,13 +27,14 @@ class SafetybeltFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        // 检查 savedInstanceState 是否为 null，确保初始的子 Fragment 只在第一次创建时添加。
-        // 如果不加此判断，每次 show/hide 该 Fragment 时，都会重新创建一个 DetectionFragment，导致状态丢失。
-        if (savedInstanceState == null) {
-            // 使用 childFragmentManager 来管理此容器内部的 Fragment 事务。
-            // 这使得此模块的导航独立于 MainActivity 的主导航。
+
+        // 关键改进：检查容器是否已经持有 Fragment
+        // 如果 childFragmentManager 已经有管理的 Fragment 了，说明是从后台切回来的，不要重置
+        val currentChild = childFragmentManager.findFragmentById(R.id.safetybelt_fragment_container)
+
+        if (savedInstanceState == null && currentChild == null) {
             childFragmentManager.beginTransaction()
-                .replace(R.id.safetybelt_fragment_container, DetectionFragment()) // 将“设备扫描页”作为初始页面加载到容器中
+                .replace(R.id.safetybelt_fragment_container, DetectionFragment())
                 .commit()
         }
     }

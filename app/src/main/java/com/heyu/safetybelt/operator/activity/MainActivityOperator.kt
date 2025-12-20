@@ -150,13 +150,15 @@ class MainActivityOperator : AppCompatActivity() {
     }
 
     private fun setupBottomNavigation() {
-        var safetybeltFragment: Fragment? = null
-        var workRecordFragment: Fragment? = null
-        var profileFragment: Fragment? = null
-
         bottomNavigation.setOnItemSelectedListener { item ->
             val transaction = supportFragmentManager.beginTransaction()
 
+            // 查找现有的 Fragment，而不是依赖局部变量
+            var safetybeltFragment = supportFragmentManager.findFragmentByTag("detection")
+            var workRecordFragment = supportFragmentManager.findFragmentByTag("work_record")
+            var profileFragment = supportFragmentManager.findFragmentByTag("profile")
+
+            // 先隐藏所有已存在的 Fragment
             supportFragmentManager.fragments.forEach { transaction.hide(it) }
 
             when (item.itemId) {
@@ -187,11 +189,6 @@ class MainActivityOperator : AppCompatActivity() {
                         }
                         transaction.add(R.id.fragment_container, profileFragment!!, "profile")
                     } else {
-                        profileFragment?.arguments = Bundle().apply {
-                            putString("workerName", workerName)
-                            putString("employeeId", employeeId)
-                            putString("workerObjectId", workerObjectId)
-                        }
                         transaction.show(profileFragment!!)
                     }
                 }
