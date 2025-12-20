@@ -225,13 +225,38 @@ class MonitoringFragment : Fragment(), UnderService.WorkerListListener {
 
     override fun onWorkerNotFound() {
         activity?.runOnUiThread {
-            Toast.makeText(context, "未找到该工人", Toast.LENGTH_SHORT).show()
+            val ctx = context
+            if (isAdded && ctx != null) {
+                AlertDialog.Builder(ctx)
+                    .setTitle("添加失败")
+                    .setMessage("未能在云端数据库中找到该工人（姓名或工号不匹配）。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
+        }
+    }
+    override fun onWorkerLogout() {
+        activity?.runOnUiThread {
+            if (isAdded && context != null) {
+                AlertDialog.Builder(requireContext())
+                    .setTitle("添加失败")
+                    .setMessage("该工人处于离线状态，未查找到相关在线作业。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
         }
     }
 
     override fun onWorkerAlreadyExists() {
         activity?.runOnUiThread {
-            Toast.makeText(context, "该工人已在列表中", Toast.LENGTH_SHORT).show()
+            val ctx = context
+            if (isAdded && ctx != null) {
+                AlertDialog.Builder(ctx)
+                    .setTitle("提示")
+                    .setMessage("该工人已在监控列表中，无需重复添加。")
+                    .setPositiveButton("确定", null)
+                    .show()
+            }
         }
     }
 

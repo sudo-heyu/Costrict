@@ -33,6 +33,7 @@ class UnderService : Service() {
 
     interface WorkerListListener {
         fun onWorkerListUpdated(workerList: List<WorkerStatus>)
+        fun onWorkerLogout()
         fun onWorkerNotFound()
         fun onWorkerAlreadyExists()
     }
@@ -115,26 +116,66 @@ class UnderService : Service() {
         restartLiveQuery()
     }
 
+// E:/AndroidStudioProject/SafetyBelt/app/src/main/java/com/heyu/safetybelt/regulator/service/UnderService.kt
+
     fun findAndAddWorker(workerName: String, workerNumber: String) {
+        // 1. 立即检查本地列表是否已存在（按姓名和工号）
         if (cachedWorkerList.any { it.workerName == workerName && it.workerNumber == workerNumber }) {
             listener?.onWorkerAlreadyExists()
             return
         }
 
-        val workerQuery = LCQuery<Worker>("Worker").whereEqualTo("name", workerName).whereEqualTo("employeeId", workerNumber)
+        val workerQuery = LCQuery<Worker>("Worker")
+            .whereEqualTo("name", workerName)
+            .whereEqualTo("employeeId", workerNumber)
+        var hasFoundWorker = false // 标志位：是否找到了工人
+
         workerQuery.firstInBackground.subscribe(object : Observer<Worker> {
             override fun onSubscribe(d: Disposable) {}
             override fun onNext(worker: Worker) {
-                val sessionQuery = LCQuery<WorkSession>("WorkSession").whereEqualTo("worker", worker).whereEqualTo("isOnline", true).orderByDescending("updatedAt")
+                // 2. 再次检查 objectId，防止同一个工人不同标识的重复
+                hasFoundWorker = true
+                if (cachedWorkerList.any { it.workerId == worker.objectId }) {
+                    listener?.onWorkerAlreadyExists()
+                    return
+                }
+
+                val sessionQuery = LCQuery<WorkSession>("WorkSession")
+                    .whereEqualTo("worker", worker)
+                    .whereEqualTo("isOnline", true)
+                    .orderByDescending("updatedAt")
+                var hasFoundSession = false // 新增：会话标志位
+
                 sessionQuery.firstInBackground.subscribe(object : Observer<WorkSession> {
                     override fun onSubscribe(d: Disposable) {}
-                    override fun onNext(session: WorkSession) { addWorkerToList(worker, session, true) }
-                    override fun onError(e: Throwable) { addWorkerToList(worker, null, false) }
-                    override fun onComplete() {}
+                    override fun onNext(session: WorkSession) {
+                        hasFoundSession = true
+                        addWorkerToList(worker, session, true)
+                    }
+                    override fun onError(e: Throwable) {
+                        listener?.onWorkerLogout()
+                    }
+                    override fun onComplete() {
+                        if (!hasFoundSession) {
+                            listener?.onWorkerLogout()
+                        }
+                    }
                 })
             }
-            override fun onError(e: Throwable) { listener?.onWorkerNotFound() }
-            override fun onComplete() {}
+            override fun onError(e: Throwable) {
+                // 只有明确是 101 错误（未找到）才触发 NotFound，否则可能是网络问题
+                if (e is LCException && e.code == 101) {
+                    listener?.onWorkerNotFound()
+                } else {
+                    Log.e("UnderService", "Query worker error: ${e.message}")
+                    listener?.onWorkerNotFound() // 默认提示未找到或检查网络
+                }
+            }
+            override fun onComplete() {
+                if (!hasFoundWorker) {
+                    listener?.onWorkerNotFound()
+                }
+            }
         })
     }
 
