@@ -11,7 +11,6 @@ import cn.leancloud.LCObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 class WorkHistoryAdapter(private var workSessions: List<LCObject>) : RecyclerView.Adapter<WorkHistoryAdapter.ViewHolder>() {
 
@@ -46,28 +45,31 @@ class WorkHistoryAdapter(private var workSessions: List<LCObject>) : RecyclerVie
         // 1. 设置日期
         holder.dateText.text = startTime?.let { dateFormatter.format(it) } ?: "日期未知"
         
-        // 2. 设置开始时间 (强制使用 HH:mm:ss)
+        // 2. 设置开始/结束时间 (强制格式化到秒)
         val startStr = startTime?.let { timeFormatter.format(it) } ?: "--:--:--"
-        holder.startTimeText.text = "开始: $startStr"
-
-        // 3. 设置结束时间 (强制使用 HH:mm:ss)
         val endStr = endTime?.let { timeFormatter.format(it) } ?: "进行中"
+        
+        holder.startTimeText.text = "开始: $startStr"
         holder.endTimeText.text = "结束: $endStr"
 
-        // 4. 计算并显示时长
-        val effectiveEndTime = endTime ?: Date()
+        // 3. 优化时长计算逻辑：对齐到秒后再相减
+        // 这样可以确保如果显示是 03秒 和 04秒，计算结果一定是 1秒，而不会因为毫秒差值产生 0秒的情况
         if (startTime != null) {
-            val durationMillis = effectiveEndTime.time - startTime.time
-            if (durationMillis >= 0) {
-                val totalSeconds = durationMillis / 1000
-                val hours = totalSeconds / 3600
-                val minutes = (totalSeconds % 3600) / 60
-                val seconds = totalSeconds % 60
+            val effectiveEndTime = endTime ?: Date()
+            
+            val startSeconds = startTime.time / 1000
+            val endSeconds = effectiveEndTime.time / 1000
+            val diffSeconds = endSeconds - startSeconds
+
+            if (diffSeconds >= 0) {
+                val h = diffSeconds / 3600
+                val m = (diffSeconds % 3600) / 60
+                val s = diffSeconds % 60
 
                 val durationTextValue = when {
-                    hours > 0 -> "${hours}小时${minutes}分钟${seconds}秒"
-                    minutes > 0 -> "${minutes}分钟${seconds}秒"
-                    else -> "${seconds}秒"
+                    h > 0 -> "${h}小时${m}分钟${s}秒"
+                    m > 0 -> "${m}分钟${s}秒"
+                    else -> "${s}秒"
                 }
                 holder.durationText.text = "时长: $durationTextValue"
             } else {
@@ -77,7 +79,7 @@ class WorkHistoryAdapter(private var workSessions: List<LCObject>) : RecyclerVie
             holder.durationText.text = "时长: 未知"
         }
 
-        // 5. 报警状态
+        // 4. 报警状态
         holder.deviceAlertText.text = "发生报警: " + (if (hasDeviceAlert) "是" else "否")
         holder.deviceAlertText.setTextColor(
             if (hasDeviceAlert) ContextCompat.getColor(context, R.color.status_danger)
