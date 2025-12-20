@@ -3,7 +3,7 @@
     <item
         android:id="@+id/navigation_detection"
         android:icon="@drawable/detect"
-        android:title="安全带检测" />
+        android:title="安全带监测" />
 
     <!-- 新增：工作记录 -->
     <item
