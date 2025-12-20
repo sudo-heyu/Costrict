@@ -31,7 +31,7 @@ object MonitoringUtil {
         return when (signalStrength) {
             "极强" -> Color.parseColor("#00C853") // A bright green for excellent signal
             "强" -> Color.GREEN
-            "中" -> Color.YELLOW
+            "中" -> Color.BLUE
             else -> Color.GRAY
         }
     }
