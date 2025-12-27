@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -60,6 +61,11 @@ class MainActivityOperator : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 拦截返回键，实现“大退”功能（将应用移至后台而不销毁 Activity）
+        onBackPressedDispatcher.addCallback(this) {
+            moveTaskToBack(true)
+        }
 
         workerName = intent.getStringExtra("workerName")
         employeeId = intent.getStringExtra("employeeId")
