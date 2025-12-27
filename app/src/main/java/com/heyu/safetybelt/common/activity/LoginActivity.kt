@@ -1,5 +1,6 @@
 package com.heyu.safetybelt.common.activity
 
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -54,9 +55,9 @@ class LoginActivity : AppCompatActivity() {
         val textWatcher = object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                val name = nameInput.text.toString().trim()
-                val employeeId = employeeIdInput.text.toString().trim()
-                loginButton.isEnabled = name.isNotEmpty() && employeeId.isNotEmpty()
+                val name = nameEditText.text.toString().trim()
+                val employeeId = employeeIdEditText.text.toString().trim()
+                saveButton.isEnabled = name.isNotEmpty() && employeeId.isNotEmpty()
             }
             override fun afterTextChanged(s: Editable?) {}
         }
@@ -71,7 +72,21 @@ class LoginActivity : AppCompatActivity() {
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         initViews()
-        updateUIForWorker()
+        setupTextWatchers()
+        
+        // 恢复上一次选择的身份
+        val sp = getSharedPreferences("LoginPrefs", Context.MODE_PRIVATE)
+        val lastIdentity = sp.getString("last_identity", UserIdentity.WORKER.name)
+        if (lastIdentity == UserIdentity.SUPERVISOR.name) {
+            rbSupervisor.isChecked = true
+            currentIdentity = UserIdentity.SUPERVISOR
+            updateUIForSupervisor(true) // 传入 true 表示是首次加载
+        } else {
+            rbWorker.isChecked = true
+            currentIdentity = UserIdentity.WORKER
+            updateUIForWorker(true) // 传入 true 表示是首次加载
+        }
+        
         setupListeners()
     }
     private fun initViews() {
@@ -90,13 +105,17 @@ class LoginActivity : AppCompatActivity() {
             when (checkedId) {
                 R.id.rb_worker -> {
                     currentIdentity = UserIdentity.WORKER
-                    updateUIForWorker()
+                    updateUIForWorker(false) // 手动切换不弹提醒
                 }
                 R.id.rb_supervisor -> {
                     currentIdentity = UserIdentity.SUPERVISOR
-                    updateUIForSupervisor()
+                    updateUIForSupervisor(false) // 手动切换不弹提醒
                 }
             }
+            // 保存当前选择的身份
+            getSharedPreferences("LoginPrefs", Context.MODE_PRIVATE).edit()
+                .putString("last_identity", currentIdentity.name)
+                .apply()
         }
 
         // 保存按钮点击监听
@@ -105,14 +124,23 @@ class LoginActivity : AppCompatActivity() {
             handleLogin()
         }
     }
-    private fun updateUIForWorker() {
+    private fun updateUIForWorker(isFirstLoad: Boolean) {
         // 更新输入框提示
         nameInputLayout.hint = "作业人员姓名"
         employeeIdInputLayout.hint = "工号"
 
-        // 清空输入
-        nameEditText.text?.clear()
-        employeeIdEditText.text?.clear()
+        // 加载保存的作业人员信息
+        val sp = getSharedPreferences("LoginPrefs", Context.MODE_PRIVATE)
+        val savedName = sp.getString("worker_name", "")
+        val savedId = sp.getString("worker_id", "")
+        
+        nameEditText.setText(savedName)
+        employeeIdEditText.setText(savedId)
+
+        // 如果是首次进入且有保存的数据，弹出 Toast 提醒
+        if (isFirstLoad && (!savedName.isNullOrEmpty() || !savedId.isNullOrEmpty())) {
+            Toast.makeText(this, "已自动为您填入上次姓名与工号", Toast.LENGTH_SHORT).show()
+        }
 
         // 设置输入类型
         nameEditText.inputType = InputType.TYPE_CLASS_TEXT
@@ -120,18 +148,28 @@ class LoginActivity : AppCompatActivity() {
 
         // 焦点设置
         nameEditText.requestFocus()
+        // 将光标移至末尾
+        nameEditText.setSelection(nameEditText.text?.length ?: 0)
 
-        // 更新按钮文本（可选）
         saveButton.text = "登录"
     }
-    private fun updateUIForSupervisor() {
+    private fun updateUIForSupervisor(isFirstLoad: Boolean) {
         // 更新输入框提示
         nameInputLayout.hint = "安监人员姓名"
         employeeIdInputLayout.hint = "工号"
 
-        // 清空输入
-        nameEditText.text?.clear()
-        employeeIdEditText.text?.clear()
+        // 加载保存的安监人员信息
+        val sp = getSharedPreferences("LoginPrefs", Context.MODE_PRIVATE)
+        val savedName = sp.getString("supervisor_name", "")
+        val savedId = sp.getString("supervisor_id", "")
+
+        nameEditText.setText(savedName)
+        employeeIdEditText.setText(savedId)
+
+        // 如果是首次进入且有保存的数据，弹出 Toast 提醒
+        if (isFirstLoad && (!savedName.isNullOrEmpty() || !savedId.isNullOrEmpty())) {
+            Toast.makeText(this, "已自动为您填入上次姓名与工号", Toast.LENGTH_SHORT).show()
+        }
 
         // 设置输入类型
         nameEditText.inputType = InputType.TYPE_CLASS_TEXT
@@ -140,7 +178,8 @@ class LoginActivity : AppCompatActivity() {
 
         // 焦点设置
         nameEditText.requestFocus()
-
+        // 将光标移至末尾
+        nameEditText.setSelection(nameEditText.text?.length ?: 0)
     }
 
     private fun handleLogin() {
@@ -159,10 +198,22 @@ class LoginActivity : AppCompatActivity() {
         saveButton.isEnabled = false
         saveButton.text = "处理中..."
 
+        // 保存当前输入的姓名和工号到本地
+        val sp = getSharedPreferences("LoginPrefs", Context.MODE_PRIVATE)
+        val editor = sp.edit()
+        if (currentIdentity == UserIdentity.WORKER) {
+            editor.putString("worker_name", name)
+            editor.putString("worker_id", employeeId)
+        } else {
+            editor.putString("supervisor_name", name)
+            editor.putString("supervisor_id", employeeId)
+        }
+        editor.apply()
+
         // 模拟网络请求延迟
         Handler().postDelayed({
             // 根据身份执行不同的登录逻辑
-            val success = when (currentIdentity) {
+            when (currentIdentity) {
                 UserIdentity.WORKER -> loginAndFindOrCreateWorker(name, employeeId)
                 UserIdentity.SUPERVISOR -> loginOrRegisterRegulator(name, employeeId)
             }
@@ -174,6 +225,8 @@ class LoginActivity : AppCompatActivity() {
             nameInputLayout.error = "请输入姓名"
             nameEditText.requestFocus()
             return false
+        } else {
+            nameInputLayout.error = null
         }
 
         if (employeeId.isEmpty()) {
@@ -183,6 +236,8 @@ class LoginActivity : AppCompatActivity() {
             }
             employeeIdEditText.requestFocus()
             return false
+        } else {
+            employeeIdInputLayout.error = null
         }
 
         return true
@@ -193,7 +248,9 @@ class LoginActivity : AppCompatActivity() {
         query.whereEqualTo("name", name)
         query.whereEqualTo("employeeId", employeeId)
         query.findInBackground().subscribe(object : Observer<List<LCObject>> {
-            override fun onSubscribe(d: Disposable) {}
+            override fun onSubscribe(d: Disposable) {
+                disposables.add(d)
+            }
 
             override fun onNext(regulators: List<LCObject>) {
                 if (regulators.isNotEmpty()) {
@@ -209,7 +266,9 @@ class LoginActivity : AppCompatActivity() {
                     regulator.put("employeeId", employeeId)
 
                     regulator.saveInBackground().subscribe(object : Observer<LCObject> {
-                        override fun onSubscribe(d: Disposable) {}
+                        override fun onSubscribe(d: Disposable) {
+                            disposables.add(d)
+                        }
 
                         override fun onNext(t: LCObject) {
                             // Save successful
@@ -223,6 +282,9 @@ class LoginActivity : AppCompatActivity() {
                             // Save failed
                             Log.e("LoginActivity", "Failed to save regulator info", e)
                             runOnUiThread {
+                                isProcessing = false
+                                saveButton.isEnabled = true
+                                saveButton.text = "登录"
                                 Toast.makeText(this@LoginActivity, "注册失败: ${e.message}", Toast.LENGTH_LONG).show()
                             }
                         }
@@ -236,6 +298,9 @@ class LoginActivity : AppCompatActivity() {
                 // Query failed
                 Log.e("LoginActivity", "Failed to query regulator info", e)
                 runOnUiThread {
+                    isProcessing = false
+                    saveButton.isEnabled = true
+                    saveButton.text = "登录"
                     Toast.makeText(this@LoginActivity, "登录或注册失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
@@ -277,6 +342,11 @@ class LoginActivity : AppCompatActivity() {
             override fun onError(e: Throwable) {
                 if (isFinishing || isDestroyed) {
                     return
+                }
+                runOnUiThread {
+                    isProcessing = false
+                    saveButton.isEnabled = true
+                    saveButton.text = "登录"
                 }
 //                showLoading(false)
                 Log.e(tag, "Anonymous login failed", e)
@@ -326,6 +396,11 @@ class LoginActivity : AppCompatActivity() {
                             if (isFinishing || isDestroyed) {
                                 return
                             }
+                            runOnUiThread {
+                                isProcessing = false
+                                saveButton.isEnabled = true
+                                saveButton.text = "登录"
+                            }
 //                            showLoading(false)
                             Log.e(tag, "Failed to save new worker", e)
                             Toast.makeText(this@LoginActivity, "创建新用户失败: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -339,6 +414,11 @@ class LoginActivity : AppCompatActivity() {
             override fun onError(e: Throwable) {
                 if (isFinishing || isDestroyed) {
                     return
+                }
+                runOnUiThread {
+                    isProcessing = false
+                    saveButton.isEnabled = true
+                    saveButton.text = "登录"
                 }
 //                showLoading(false)
                 Log.e(tag, "Failed to find worker", e)
@@ -357,13 +437,5 @@ class LoginActivity : AppCompatActivity() {
         startActivity(intent)
         finish()
     }
-
-
-    //    private fun showLoading(isLoading: Boolean) {
-//        loadingIndicator.visibility = if (isLoading) View.VISIBLE else View.GONE
-//        nameInput.isEnabled = !isLoading
-//        employeeIdInput.isEnabled = !isLoading
-//        loginButton.isEnabled = if (isLoading) false else (nameInput.text.isNotBlank() && employeeIdInput.text.isNotBlank())
-//    }
 
 }

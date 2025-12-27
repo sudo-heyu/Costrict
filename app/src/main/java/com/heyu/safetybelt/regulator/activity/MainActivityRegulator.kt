@@ -3,6 +3,7 @@ package com.heyu.safetybelt.regulator.activity
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import androidx.activity.addCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.setupWithNavController
@@ -17,6 +18,11 @@ class MainActivityRegulator : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 拦截返回键，实现“大退”功能（将应用移至后台而不销毁 Activity）
+        onBackPressedDispatcher.addCallback(this) {
+            moveTaskToBack(true)
+        }
 
         binding = ActivityMainRegulatorBinding.inflate(layoutInflater)
         setContentView(binding.root)
