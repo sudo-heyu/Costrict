@@ -102,7 +102,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         override fun run() {
             val sid = currentSessionId
             if (!sid.isNullOrEmpty() && !isShuttingDown) {
-                Log.d(TAG, "!! 蹦蹦猪，心跳开始上报... SID: $sid !!")
+                Log.d(TAG, "蹦蹦猪心跳开始上报... SID: $sid !!")
                 try {
                     val session = LCObject.createWithoutData("WorkSession", sid)
                     session.put("lastHeartbeat", Date())
@@ -112,11 +112,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         }
 
                         override fun onNext(t: LCObject) {
-                            Log.d(TAG, "!! 蹦蹦猪，云端打卡成功 !!")
+                            Log.d(TAG, "蹦蹦猪云端打卡成功")
                         }
 
                         override fun onError(e: Throwable) {
-                            Log.e(TAG, "!! 蹦蹦猪，云端打卡失败 !!: ${e.message}")
+                            Log.e(TAG, " 蹦蹦猪，云端打卡失败: ${e.message}")
                         }
 
                         override fun onComplete() {}

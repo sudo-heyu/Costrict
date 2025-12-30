@@ -14,6 +14,7 @@
     <color name="brand_accent">#42A5F5</color>
     
     <!-- 背景色 -->
+o    <color name="background_dark">#FF212121</color>
     <color name="background_light">#F5F7FA</color>
     <color name="card_background">#FFFFFF</color>
 

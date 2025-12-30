@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- “安全带检测”页面的布局文件 -->
+<!-- "安全带检测"页面的布局文件 -->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/white"
     android:fitsSystemWindows="true"
     tools:context=".fragment.DetectionFragment">
 
@@ -172,16 +171,24 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/status_container" />
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/devices_recycler_view"
+    <FrameLayout
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:layout_margin="8dp"
+        android:background="@drawable/device_list_border"
         app:layout_constraintBottom_toTopOf="@id/scan_button"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/scan_list_title"
-        tools:listitem="@layout/list_item_scan" />
+        app:layout_constraintTop_toBottomOf="@id/scan_list_title">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/devices_recycler_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="4dp"
+            tools:listitem="@layout/list_item_scan" />
+
+    </FrameLayout>
 
     <!-- 扫描/确定按钮 -->
     <Button
