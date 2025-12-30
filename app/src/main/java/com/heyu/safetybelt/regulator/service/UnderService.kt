@@ -28,6 +28,7 @@ import com.heyu.safetybelt.common.WorkSession
 import com.heyu.safetybelt.common.Worker
 import com.heyu.safetybelt.common.WorkerStatus
 import com.heyu.safetybelt.regulator.activity.MainActivityRegulator
+import com.heyu.safetybelt.common.NotificationHelper
 import io.reactivex.Observer
 import io.reactivex.disposables.Disposable
 import java.util.Date
@@ -221,14 +222,32 @@ class UnderService : Service() {
                 enableLights(true)
                 lightColor = android.graphics.Color.BLUE
                 enableVibration(false)
-                setShowBadge(false)
+                setShowBadge(true) // 允许显示徽章
                 setSound(null, null)
-                // Android 13+ 需要用户明确授权
+                
+                // 关键：确保锁屏显示 - 必须在创建通道前设置
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                }
+                
+                // 允许绕过免打扰模式
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    setBypassDnd(true)
+                }
+                
+                // 设置高优先级确保显示
+                importance = NotificationManager.IMPORTANCE_HIGH
+                
+                // 确保在Android 13+上显示
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    importance = NotificationManager.IMPORTANCE_HIGH
+                    // 不需要重复设置importance，已在构造函数中设置
                 }
             }
-            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+            
+            // 删除并重新创建通道以确保设置生效
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.deleteNotificationChannel(channelId)
+            notificationManager.createNotificationChannel(channel)
         }
 
         val notificationIntent = Intent(this, MainActivityRegulator::class.java)
@@ -237,14 +256,33 @@ class UnderService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
+        // 获取当前监控状态信息用于通知内容
+        val monitoringCount = cachedWorkerList.count { it.isOnline }
+        val abnormalCount = cachedWorkerList.count { it.status.contains("异常") }
+        val notificationText = if (cachedWorkerList.isNotEmpty()) {
+            "正在监控 ${cachedWorkerList.size} 名工人，$monitoringCount 人在线，$abnormalCount 人异常"
+        } else {
+            "安监员后台监控服务运行中"
+        }
+
         val notification: Notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("安监员监控服务")
-            .setContentText("正在实时监控工人作业安全状态")
+            .setContentTitle("安监员监控 - 后台保护中")
+            .setContentText(notificationText)
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
             .setContentIntent(pendingIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_MAX) // 最高优先级
+            .setCategory(NotificationCompat.CATEGORY_ALARM) // 告警类别，确保锁屏显示
+            .setOngoing(true) // 设置为持续通知，显示在锁屏界面
+            .setShowWhen(true)
+            .setWhen(System.currentTimeMillis())
+            .setOnlyAlertOnce(true)
+            // 添加扩展内容，在锁屏界面显示更多信息
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText(notificationText + "\n\n点击返回应用查看工人监控详情"))
+            // 确保在Android 15上显示
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -252,6 +290,7 @@ class UnderService : Service() {
         } else {
             startForeground(1, notification)
         }
+        // 只显示一个通知 - 前台服务通知，不再显示额外的系统通知
     }
 
     private fun startAutoRefresh() {

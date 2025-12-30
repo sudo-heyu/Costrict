@@ -1,11 +1,14 @@
 package com.heyu.safetybelt.operator.fragment
 
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import com.heyu.safetybelt.R
+import com.heyu.safetybelt.application.MainApplication
+import com.heyu.safetybelt.operator.service.BleService
 
 /**
  * “安全带检测”模块的导航管家 (Container Fragment)。
@@ -29,13 +32,57 @@ class SafetybeltFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         // 关键改进：检查容器是否已经持有 Fragment
-        // 如果 childFragmentManager 已经有管理的 Fragment 了，说明是从后台切回来的，不要重置
         val currentChild = childFragmentManager.findFragmentById(R.id.safetybelt_fragment_container)
+        
+        Log.d("SafetybeltFragment", "onViewCreated - savedInstanceState: ${savedInstanceState != null}, currentChild: ${currentChild?.javaClass?.simpleName}")
+        
+        // 检查监控模式和会话状态
+        val isInMonitoring = MainApplication.getInstance().isInMonitoringMode
+        val currentSessionId = BleService.currentSessionId
+        
+        Log.d("SafetybeltFragment", "监控模式: $isInMonitoring, SessionId: $currentSessionId")
 
         if (savedInstanceState == null && currentChild == null) {
-            childFragmentManager.beginTransaction()
-                .replace(R.id.safetybelt_fragment_container, DetectionFragment())
-                .commit()
+            // 首次创建且没有已有Fragment时，检查是否需要显示监控界面
+            if (isInMonitoring && currentSessionId != null) {
+                Log.d("SafetybeltFragment", "首次创建但需要显示监控界面")
+                val monitoringFragment = MonitoringFragment()
+                childFragmentManager.beginTransaction()
+                    .replace(R.id.safetybelt_fragment_container, monitoringFragment, "monitoring")
+                    .commit()
+            } else {
+                Log.d("SafetybeltFragment", "首次创建，显示DetectionFragment")
+                childFragmentManager.beginTransaction()
+                    .replace(R.id.safetybelt_fragment_container, DetectionFragment())
+                    .commit()
+            }
+        } else if (savedInstanceState != null) {
+            // 从系统恢复时，检查是否需要恢复监控界面
+            Log.d("SafetybeltFragment", "从系统恢复，当前Child: ${currentChild?.javaClass?.simpleName}")
+            
+            if (currentChild == null && isInMonitoring && currentSessionId != null) {
+                Log.d("SafetybeltFragment", "需要恢复监控界面")
+                val monitoringFragment = MonitoringFragment()
+                childFragmentManager.beginTransaction()
+                    .replace(R.id.safetybelt_fragment_container, monitoringFragment, "monitoring")
+                    .commit()
+            } else {
+                Log.d("SafetybeltFragment", "保持现有Fragment状态")
+            }
+        } else if (currentChild == null) {
+            // currentChild为null但savedInstanceState也为null（Activity被系统杀死重建）
+            Log.d("SafetybeltFragment", "Activity重建但无保存状态，检查监控模式")
+            if (isInMonitoring && currentSessionId != null) {
+                val monitoringFragment = MonitoringFragment()
+                childFragmentManager.beginTransaction()
+                    .replace(R.id.safetybelt_fragment_container, monitoringFragment, "monitoring")
+                    .commit()
+            } else {
+                childFragmentManager.beginTransaction()
+                    .replace(R.id.safetybelt_fragment_container, DetectionFragment())
+                    .commit()
+            }
         }
+        // 如果currentChild不为null，说明Fragment已经存在，保持现状
     }
 }

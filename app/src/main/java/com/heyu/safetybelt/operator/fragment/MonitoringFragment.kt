@@ -26,6 +26,7 @@ import androidx.fragment.app.Fragment
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import cn.leancloud.LCObject
 import com.heyu.safetybelt.R
+import com.heyu.safetybelt.application.MainApplication
 import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.activity.MainActivityOperator
 import com.heyu.safetybelt.operator.model.DeviceScanResult
@@ -180,6 +181,15 @@ class MonitoringFragment : Fragment() {
     override fun onDestroy() {
         super.onDestroy()
         compositeDisposable.clear()
+        // 重要：只有在用户主动退出时才标记监控模式结束
+        // 如果是系统回收导致的销毁，不要改变监控状态
+        if (!requireActivity().isFinishing && !requireActivity().isChangingConfigurations) {
+            // 用户主动退出，标记监控模式结束
+            MainApplication.getInstance().isInMonitoringMode = false
+            Log.d(TAG, "用户主动退出监控界面，标记监控模式结束")
+        } else {
+            Log.d(TAG, "系统回收导致的销毁，保持监控状态")
+        }
     }
 
     fun updateDevices(newDevices: List<DeviceScanResult>) {
@@ -317,6 +327,8 @@ class MonitoringFragment : Fragment() {
             .setTitle("断开所有连接")
             .setMessage("您确定要断开所有设备的连接吗？这将结束本次工作记录。")
             .setPositiveButton("确定") { _, _ ->
+                // 标记监控模式结束
+                MainApplication.getInstance().isInMonitoringMode = false
                 // 立即触发返回逻辑，提高响应感知速度
                 parentFragmentManager.popBackStack()
 

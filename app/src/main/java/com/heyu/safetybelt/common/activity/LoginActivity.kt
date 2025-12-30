@@ -1,7 +1,10 @@
 package com.heyu.safetybelt.common.activity
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.text.Editable
@@ -13,7 +16,10 @@ import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import cn.leancloud.LCObject
 import cn.leancloud.LCQuery
 import cn.leancloud.LCUser
@@ -21,6 +27,7 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.common.activity.UserIdentity
+import com.heyu.safetybelt.application.MainApplication
 import com.heyu.safetybelt.common.Worker
 import com.heyu.safetybelt.databinding.ActivityLoginBinding
 import com.heyu.safetybelt.operator.activity.MainActivityOperator
@@ -48,6 +55,19 @@ class LoginActivity : AppCompatActivity() {
     private var isProcessing = false
     private val tag = "LoginActivity"
     private val disposables = CompositeDisposable()
+    
+    // Android 13+ 通知权限请求
+    private val requestPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            Log.d(tag, "通知权限已授予")
+            Toast.makeText(this, "通知权限已授予，后台保护服务将正常工作", Toast.LENGTH_SHORT).show()
+        } else {
+            Log.w(tag, "通知权限被拒绝")
+            showPermissionRationaleDialog()
+        }
+    }
 
 
     private fun setupTextWatchers() {
@@ -88,6 +108,7 @@ class LoginActivity : AppCompatActivity() {
         }
         
         setupListeners()
+        checkNotificationPermission()
     }
     private fun initViews() {
         radioGroup = findViewById(R.id.login_title)
@@ -139,7 +160,7 @@ class LoginActivity : AppCompatActivity() {
 
         // 如果是首次进入且有保存的数据，弹出 Toast 提醒
         if (isFirstLoad && (!savedName.isNullOrEmpty() || !savedId.isNullOrEmpty())) {
-            Toast.makeText(this, "已自动为您填入上次姓名与工号", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已自动为您填入上次的姓名与工号", Toast.LENGTH_SHORT).show()
         }
 
         // 设置输入类型
@@ -310,6 +331,16 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun navigateToMainRegulator(name: String, employeeId: String) {
+        // 保存用户信息到MainApplication，防止Activity重建时数据丢失
+        MainApplication.getInstance().currentWorkerName = name
+        MainApplication.getInstance().currentEmployeeId = employeeId
+        MainApplication.getInstance().currentUserType = "regulator"
+        
+        // 检查通知权限
+        if (!checkAndRequestNotificationPermission()) {
+            return
+        }
+        
         val intent = Intent(this@LoginActivity, MainActivityRegulator::class.java)
         intent.putExtra("user_name", name)
         intent.putExtra("employee_id", employeeId)
@@ -429,6 +460,17 @@ class LoginActivity : AppCompatActivity() {
         })
     }
     private fun navigateToMainOperator(name: String, employeeId: String, workerObjectId: String) {
+        // 保存用户信息到MainApplication，防止Activity重建时数据丢失
+        MainApplication.getInstance().currentWorkerName = name
+        MainApplication.getInstance().currentEmployeeId = employeeId
+        MainApplication.getInstance().currentWorkerObjectId = workerObjectId
+        MainApplication.getInstance().currentUserType = "worker"
+        
+        // 检查通知权限
+        if (!checkAndRequestNotificationPermission()) {
+            return
+        }
+        
         val intent = Intent(this, MainActivityOperator::class.java).apply {
             putExtra("workerName", name)
             putExtra("employeeId", employeeId)
@@ -436,6 +478,56 @@ class LoginActivity : AppCompatActivity() {
         }
         startActivity(intent)
         finish()
+    }
+    
+    private fun checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                // 请求通知权限
+                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+    
+    private fun checkAndRequestNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // Android 13+
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                // 显示权限说明对话框
+                showPermissionRationaleDialog()
+                return false
+            }
+        }
+        return true
+    }
+    
+    private fun showPermissionRationaleDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("需要通知权限")
+            .setMessage("为了确保后台安全保护服务正常工作，我们需要向您发送通知来显示安全带监控状态。")
+            .setPositiveButton("授权") { _, _ ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+            }
+            .setNegativeButton("取消") { dialog, _ ->
+                dialog.dismiss()
+                // 用户拒绝权限，但仍然允许继续使用应用
+                Toast.makeText(
+                    this,
+                    "没有通知权限，后台保护可能无法正常工作",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            .setCancelable(false)
+            .show()
     }
 
 }

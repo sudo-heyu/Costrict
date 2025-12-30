@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -32,6 +33,7 @@ import cn.leancloud.LCObject
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.heyu.safetybelt.R
+import com.heyu.safetybelt.application.MainApplication
 import com.heyu.safetybelt.operator.adapter.ScanDeviceAdapter
 import com.heyu.safetybelt.operator.adapter.StatusDeviceAdapter
 import com.heyu.safetybelt.operator.model.DeviceScanResult
@@ -138,10 +140,14 @@ class DetectionFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // 优先从Activity的intent获取用户ID，如果为null则从MainApplication恢复
         val newWorkerId = requireActivity().intent.getStringExtra("workerObjectId")
+            ?: MainApplication.getInstance().currentWorkerObjectId
+        
         if (newWorkerId == null) {
-            Toast.makeText(requireContext(), "错误: 无法获取用户ID", Toast.LENGTH_LONG).show()
-            parentFragmentManager.popBackStack()
+            Toast.makeText(requireContext(), "错误: 无法获取用户ID，请重新登录", Toast.LENGTH_LONG).show()
+            // 不通过popBackStack退出，而是直接让用户返回 MainActivity
+            requireActivity().finish()
             return
         }
 
@@ -165,7 +171,10 @@ class DetectionFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        startBleScan()
+        // 确保adapter已初始化后再开始扫描
+        if (this::scanAdapter.isInitialized) {
+            startBleScan()
+        }
     }
 
     override fun onDestroy() {
@@ -351,7 +360,8 @@ class DetectionFragment : Fragment() {
         xykRemoveButton.setOnClickListener { handleRemoveFromXyk() }
 
         binding.scanButton.text = "确定"
-        binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.darkblue)
+        binding.scanButton.setTextColor(Color.WHITE)
+        binding.scanButton.backgroundTintList = ContextCompat.getColorStateList(requireContext(), R.color.lightblue)
         binding.scanButton.setOnClickListener { navigateOrUpdateMonitoring() }
     }
 
@@ -525,6 +535,11 @@ class DetectionFragment : Fragment() {
         if (!isScanning) {
             if (bleScanner == null) {
                 Toast.makeText(requireContext(), "无法初始化蓝牙扫描器", Toast.LENGTH_SHORT).show()
+                return
+            }
+            // 检查scanAdapter是否已初始化
+            if (!this::scanAdapter.isInitialized) {
+                Log.w("DetectionFragment", "scanAdapter not initialized, skipping scan")
                 return
             }
             scannedDevicesMap.clear()

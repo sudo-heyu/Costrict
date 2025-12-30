@@ -9,8 +9,24 @@ import com.heyu.safetybelt.common.Device
 //import com.heyu.safetybelt.regulator.model.Worker
 
 class MainApplication : Application() {
+    // 保存当前用户信息，防止Activity重建时数据丢失
+    var currentWorkerName: String? = null
+    var currentEmployeeId: String? = null
+    var currentWorkerObjectId: String? = null
+    var currentUserType: String? = null // "worker" 或 "regulator"
+    
+    // 保存当前Fragment状态，防止Activity重建时丢失监控界面
+    var isInMonitoringMode: Boolean = false
+
+    companion object {
+        private var instance: MainApplication? = null
+        
+        fun getInstance(): MainApplication = instance!!
+    }
+
     override fun onCreate() {
         super.onCreate()
+        instance = this
 
         // 安监人员端注册子类 (Best Practice)
 //        LCObject.registerSubclass(Worker::class.java)

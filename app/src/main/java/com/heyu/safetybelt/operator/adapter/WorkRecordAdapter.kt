@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.operator.model.WorkRecordManager
@@ -60,7 +61,7 @@ class WorkRecordAdapter(private var recordList: MutableList<WorkRecord>) :
         if (count > 0) {
             holder.tvAlertCount.setTextColor(holder.itemView.context.resources.getColor(android.R.color.holo_red_dark, null))
         } else {
-            holder.tvAlertCount.setTextColor(holder.itemView.context.resources.getColor(android.R.color.black, null))
+            holder.tvAlertCount.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.text_primary_dark))
         }
         
         // 无论次数是否大于0，都允许点击查看详情

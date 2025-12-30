@@ -19,9 +19,19 @@ class MainActivityRegulator : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 拦截返回键，实现“大退”功能（将应用移至后台而不销毁 Activity）
+        // 拦截返回键，实现"大退"功能（将应用移至后台而不销毁 Activity）
         onBackPressedDispatcher.addCallback(this) {
             moveTaskToBack(true)
+        }
+
+        // 保存用户信息到MainApplication，防止Activity重建时丢失
+        val userName = intent.getStringExtra("user_name")
+        val employeeId = intent.getStringExtra("employee_id")
+        if (userName != null && employeeId != null) {
+            com.heyu.safetybelt.application.MainApplication.getInstance().currentWorkerName = userName
+            com.heyu.safetybelt.application.MainApplication.getInstance().currentEmployeeId = employeeId
+            com.heyu.safetybelt.application.MainApplication.getInstance().currentUserType = "regulator"
+            android.util.Log.d("MainActivityRegulator", "保存用户信息到MainApplication: $userName, $employeeId")
         }
 
         binding = ActivityMainRegulatorBinding.inflate(layoutInflater)

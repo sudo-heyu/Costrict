@@ -37,6 +37,7 @@ import com.heyu.safetybelt.common.AlarmEvent
 import com.heyu.safetybelt.operator.model.DeviceScanResult
 import com.heyu.safetybelt.common.WorkSession
 import com.heyu.safetybelt.operator.activity.MainActivityOperator
+import com.heyu.safetybelt.common.NotificationHelper
 import io.reactivex.Observer
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
@@ -98,8 +99,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     private val muteRunnable = Runnable { isMuted = false }
     private var isShuttingDown = false
 
-    // 蹦蹦猪高詹子慧心跳逻辑：每 60 秒给云端报个平安
-    private val HEARTBEAT_INTERVAL_MS = 60000L
+    // 蹦蹦猪高詹子慧心跳逻辑：每 5 秒给云端报个平安
+    private val HEARTBEAT_INTERVAL_MS = 5000L
 
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
@@ -172,25 +173,59 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     override fun onCreate() {
         super.onCreate()
         tts = TextToSpeech(this, this)
+        
+        // 恢复之前保存的sessionId
+        val sharedPrefs = getSharedPreferences("BleService_Backup", Context.MODE_PRIVATE)
+        val savedSessionId = sharedPrefs.getString("active_session_id", null)
+        if (savedSessionId != null) {
+            currentSessionId = savedSessionId
+            Log.d(TAG, "恢复保存的sessionId: $savedSessionId")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
 
-        val notificationIntent = Intent(this, MainActivityOperator::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        // 只在服务首次启动时显示通知，避免重复显示
+        if (flags == 0) { // flags == 0 表示这是服务的首次启动，不是重启
+            val notificationIntent = Intent(this, MainActivityOperator::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
 
-        val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("安全带卫士")
-            .setContentText("正在后台保护您的作业安全")
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
-        startForeground(NOTIFICATION_ID, notification)
+            // 获取当前连接状态信息用于通知内容
+            val connectedCount = deviceStates.values.count { it.connectionStatus == ConnectionStatus.CONNECTED }
+            val totalCount = deviceStates.size
+            val notificationText = if (totalCount > 0) {
+                "已连接 $connectedCount/$totalCount 个设备，正在监控安全带状态"
+            } else {
+                "正在后台保护您的作业安全"
+            }
+
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("安全带卫士 - 后台监控中")
+                .setContentText(notificationText)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
+                .setContentIntent(pendingIntent)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setPriority(NotificationCompat.PRIORITY_MAX) // 最高优先级
+                .setCategory(NotificationCompat.CATEGORY_ALARM) // 告警类别，确保锁屏显示
+                .setOngoing(true) // 设置为持续通知，显示在锁屏界面
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setOnlyAlertOnce(true)
+                // 添加扩展内容，在锁屏界面显示更多信息
+                .setStyle(NotificationCompat.BigTextStyle()
+                    .bigText(notificationText + "\n\n点击返回应用查看详细监控状态"))
+                // 确保在Android 15上显示
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .build()
+            
+            // 只显示一个通知 - 前台服务通知，不再显示额外的系统通知
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         when (intent?.action) {
             ACTION_CONNECT_DEVICES -> {
@@ -1127,14 +1162,32 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 enableLights(true)
                 lightColor = android.graphics.Color.RED
                 enableVibration(false)
-                setShowBadge(false)
+                setShowBadge(true) // 允许显示徽章
                 setSound(null, null)
-                // Android 13+ 需要用户明确授权
+                
+                // 关键：确保锁屏显示 - 必须在创建通道前设置
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                }
+                
+                // 允许绕过免打扰模式
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    setBypassDnd(true)
+                }
+                
+                // 设置高优先级确保显示
+                importance = NotificationManager.IMPORTANCE_HIGH
+                
+                // 确保在Android 13+上显示
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    importance = NotificationManager.IMPORTANCE_HIGH
+                    // 不需要重复设置importance，已在构造函数中设置
                 }
             }
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+            
+            // 删除并重新创建通道以确保设置生效
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.deleteNotificationChannel(NOTIFICATION_CHANNEL_ID)
+            notificationManager.createNotificationChannel(channel)
         }
     }
 

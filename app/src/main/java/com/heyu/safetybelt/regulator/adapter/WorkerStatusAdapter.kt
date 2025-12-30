@@ -121,25 +121,40 @@ class WorkerStatusAdapter(
             holder.sendAlertButton.iconTint = ColorStateList.valueOf(colorGray)
         }
 
-        // 计时器逻辑
+        // 计时器逻辑 - 纯正的持续时长，计算当前时间减去开始时间（与详情界面一致）
         timers[holder]?.let { handler.removeCallbacks(it) }
         timers.remove(holder)
 
-        if (isRealOnline && workerStatus.lastUpdatedAt != null) {
-            val startTime = workerStatus.lastUpdatedAt.time
-            val timerRunnable = object : Runnable {
-                override fun run() {
-                    val elapsedMillis = System.currentTimeMillis() - startTime
-                    val millis = if (elapsedMillis < 0) 0 else elapsedMillis
-                    val hours = millis / (1000 * 60 * 60)
-                    val minutes = (millis / (1000 * 60)) % 60
-                    val seconds = (millis / 1000) % 60
-                    holder.lastUpdated.text = String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
-                    handler.postDelayed(this, 1000)
+        if (isRealOnline && workerStatus.sessionId != null) {
+            // 从云端获取作业开始时间，计算纯正的持续时长
+            val query = cn.leancloud.LCQuery<cn.leancloud.LCObject>("WorkSession")
+            query.getInBackground(workerStatus.sessionId).subscribe(object : io.reactivex.Observer<cn.leancloud.LCObject> {
+                override fun onSubscribe(d: io.reactivex.disposables.Disposable) {}
+                
+                override fun onNext(session: cn.leancloud.LCObject) {
+                    val startTime = session.getDate("startTime")?.time ?: System.currentTimeMillis()
+                    val timerRunnable = object : Runnable {
+                        override fun run() {
+                            val elapsedMillis = System.currentTimeMillis() - startTime
+                            val millis = if (elapsedMillis < 0) 0 else elapsedMillis
+                            val hours = millis / (1000 * 60 * 60)
+                            val minutes = (millis / (1000 * 60)) % 60
+                            val seconds = (millis / 1000) % 60
+                            holder.lastUpdated.text = String.format(Locale.getDefault(), "%02d:%02d:%02d", hours, minutes, seconds)
+                            handler.postDelayed(this, 1000)
+                        }
+                    }
+                    timers[holder] = timerRunnable
+                    handler.post(timerRunnable)
                 }
-            }
-            timers[holder] = timerRunnable
-            handler.post(timerRunnable)
+                
+                override fun onError(e: Throwable) {
+                    // 如果获取失败，显示错误状态
+                    holder.lastUpdated.text = "获取时长失败"
+                }
+                
+                override fun onComplete() {}
+            })
         } else {
             holder.lastUpdated.text = "--:--:--"
         }
@@ -287,7 +302,7 @@ class WorkerStatusAdapter(
             when (finalStatus) {
                 "已扣好", "已挂好" -> textView.setTextColor(ContextCompat.getColor(context, R.color.status_normal))
                 "未扣好", "未挂好", "未挂" -> textView.setTextColor(ContextCompat.getColor(context, R.color.status_danger))
-                else -> textView.setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                else -> textView.setTextColor(ContextCompat.getColor(context, R.color.text_primary_dark)) // 修复：使用深色主题的文本颜色
             }
         }
     }

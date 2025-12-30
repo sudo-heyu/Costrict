@@ -54,13 +54,20 @@ class ProfileFragment : Fragment() {
         }
 
         // 从 arguments 中获取由 MainActivity 传递过来的工人信息
+        // 如果arguments为空（Activity重建时），从MainApplication恢复
         val workerName = arguments?.getString("workerName")
+            ?: com.heyu.safetybelt.application.MainApplication.getInstance().currentWorkerName
         val employeeId = arguments?.getString("employeeId")
+            ?: com.heyu.safetybelt.application.MainApplication.getInstance().currentEmployeeId
         workerObjectId = arguments?.getString("workerObjectId")
+            ?: com.heyu.safetybelt.application.MainApplication.getInstance().currentWorkerObjectId
 
-        // 将信息显示在 TextView 上
-        binding.tvWorkerName.text = workerName
-        binding.tvEmployeeId.text = employeeId
+        // 将信息显示在 TextView 上，如果仍然为null则显示N/A
+        binding.tvWorkerName.text = workerName ?: "N/A"
+        binding.tvEmployeeId.text = employeeId ?: "N/A"
+        
+        // 记录恢复状态用于调试
+        android.util.Log.d(TAG, "ProfileFragment - workerName: $workerName, employeeId: $employeeId, workerObjectId: $workerObjectId")
 
         // 设置编辑按钮的点击事件
         binding.ibEditName.setOnClickListener {

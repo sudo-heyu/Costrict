@@ -27,11 +27,19 @@ class ProfileFragment : Fragment() {
 
     private fun loadUserInfo() {
         // The user info is passed from LoginActivity via MainActivity's intent
-        val name = activity?.intent?.getStringExtra("user_name") ?: "N/A"
-        val employeeId = activity?.intent?.getStringExtra("employee_id") ?: "N/A"
+        // If Activity is recreated by system, try to restore from MainApplication
+        val name = activity?.intent?.getStringExtra("user_name")
+            ?: com.heyu.safetybelt.application.MainApplication.getInstance().currentWorkerName
+            ?: "N/A"
+        val employeeId = activity?.intent?.getStringExtra("employee_id")
+            ?: com.heyu.safetybelt.application.MainApplication.getInstance().currentEmployeeId
+            ?: "N/A"
 
         binding.nameTextView.text = name
         binding.employeeIdTextView.text = employeeId
+        
+        // Log for debugging
+        android.util.Log.d("RegulatorProfileFragment", "Loaded user info - name: $name, employeeId: $employeeId")
     }
 
     override fun onDestroyView() {

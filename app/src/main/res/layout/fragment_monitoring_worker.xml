@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    tools:context=".fragment.MonitoringFragment">
+    tools:context=".operator.fragment.MonitoringFragment">
 
     <!-- Back button with text, moved further to the left -->
     <TextView
@@ -18,7 +18,7 @@
         android:clickable="true"
         android:drawableStart="@drawable/ic_arrow_back"
         android:drawablePadding="4dp"
-        android:drawableTint="@color/darkblue"
+        android:drawableTint="@color/white"
         android:focusable="true"
         android:gravity="center_vertical"
         android:padding="8dp"
