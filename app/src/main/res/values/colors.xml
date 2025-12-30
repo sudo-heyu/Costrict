@@ -16,7 +16,8 @@
     <!-- 背景色 -->
 o    <color name="background_dark">#FF212121</color>
     <color name="background_light">#F5F7FA</color>
-    <color name="card_background">#FFFFFF</color>
+    <color name="card_background">#FF1E1E1E</color>
+    <color name="card_background_dark">#FF121212</color>
 
     <!-- 状态颜色 -->
     <color name="status_normal">#4CAF50</color>   <!-- 绿色：正常 -->
@@ -29,6 +30,11 @@ o    <color name="background_dark">#FF212121</color>
     <color name="text_primary">#212121</color>
     <color name="text_secondary">#757575</color>
     <color name="text_tertiary">#BDBDBD</color>
+    
+    <!-- 深色主题文本颜色 -->
+    <color name="text_primary_dark">#FFFFFFFF</color>
+    <color name="text_secondary_dark">#FFB3B3B3</color>
+    <color name="text_tertiary_dark">#FF808080</color>
 
     <!-- 登录界面美化 -->
     <color name="login_background_start">#E3F2FD</color>
@@ -36,6 +42,16 @@ o    <color name="background_dark">#FF212121</color>
     <color name="input_border_focused">@color/brand_primary</color>
     <color name="placeholder_text">#999999</color>
     <color name="error_text">#e74c3c</color>
+    
+    <!-- 深色主题按钮颜色 -->
+    <color name="button_primary_dark">#FF1976D2</color>
+    <color name="button_secondary_dark">#FF42A5F5</color>
+    <color name="button_danger_dark">#FFD32F2F</color>
+    <color name="button_success_dark">#FF388E3C</color>
+    
+    <!-- 传感器槽位深色背景 -->
+    <color name="sensor_slot_background_dark">#FF2C2C2C</color>
+    <color name="sensor_slot_border_dark">#FF404040</color>
 
     <!-- 兼容旧代码引用 -->
     <color name="lightblue">#22D1DD</color>

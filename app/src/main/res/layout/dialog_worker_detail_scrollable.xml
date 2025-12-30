@@ -23,14 +23,14 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@drawable/monitoring"
-                app:tint="@color/text_primary" />
+                app:tint="@color/text_primary_dark" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:text="安全带佩戴状态监测"
-                android:textColor="@color/text_primary"
+                android:textColor="@color/text_primary_dark"
                 android:textSize="16sp"
                 android:textStyle="bold" />
         </LinearLayout>
@@ -50,7 +50,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -66,7 +66,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="后背绳高挂"
-                        android:textColor="@color/text_secondary"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -74,7 +74,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -87,7 +87,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -103,7 +103,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="后背绳小钩"
-                        android:textColor="@color/text_secondary"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -111,7 +111,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -124,7 +124,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -140,7 +140,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="围杆带环抱"
-                        android:textColor="@color/text_secondary"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -148,7 +148,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -161,7 +161,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -177,7 +177,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="围杆带钩"
-                        android:textColor="@color/text_secondary"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -185,7 +185,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -198,7 +198,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -213,8 +213,8 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="胸腰扣"
-                        android:textColor="@color/text_secondary"
+                        android:text="腰扣"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -222,7 +222,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -235,7 +235,7 @@
                 android:layout_height="wrap_content"
                 android:layout_columnWeight="1"
                 android:layout_margin="4dp"
-                app:cardBackgroundColor="#F8F9FA"
+                app:cardBackgroundColor="@color/card_background_dark"
                 app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeColor="#E0E0E0"
@@ -251,7 +251,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="后背绳大钩"
-                        android:textColor="@color/text_secondary"
+                        android:textColor="@color/text_secondary_dark"
                         android:textSize="12sp" />
 
                     <TextView
@@ -259,7 +259,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
-                        android:textColor="@color/text_primary"
+                        android:textColor="@color/text_primary_dark"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         tools:text="未挂" />
@@ -287,14 +287,14 @@
                 android:layout_width="24dp"
                 android:layout_height="24dp"
                 android:src="@android:drawable/ic_menu_recent_history"
-                app:tint="@color/text_primary" />
+                app:tint="@color/text_primary_dark" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:text="工作历史"
-                android:textColor="@color/text_primary"
+                android:textColor="@color/text_primary_dark"
                 android:textSize="16sp"
                 android:textStyle="bold" />
         </LinearLayout>

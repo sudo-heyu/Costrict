@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Android 13+ 通知权限 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
@@ -63,21 +65,21 @@
             android:name="com.heyu.safetybelt.operator.activity.MainActivityOperator"
             android:exported="false" />
 
-        <activity
-            android:name="com.heyu.safetybelt.operator.activity.LoginActivity"
-            android:exported="false" />
+<!--        <activity-->
+<!--            android:name="com.heyu.safetybelt.operator.activity.LoginActivity"-->
+<!--            android:exported="false" />-->
 
-        <activity
-            android:name="com.heyu.safetybelt.regulator.activity.LoginActivity"
-            android:exported="false" />
+<!--        <activity-->
+<!--            android:name="com.heyu.safetybelt.regulator.activity.LoginActivity"-->
+<!--            android:exported="false" />-->
 
-        <activity
-            android:name="com.heyu.safetybelt.operator.activity.SplashActivity"
-            android:exported="false" />
+<!--        <activity-->
+<!--            android:name="com.heyu.safetybelt.operator.activity.SplashActivity"-->
+<!--            android:exported="false" />-->
 
-        <activity
-            android:name="com.heyu.safetybelt.regulator.activity.SplashActivity"
-            android:exported="false" />
+<!--        <activity-->
+<!--            android:name="com.heyu.safetybelt.regulator.activity.SplashActivity"-->
+<!--            android:exported="false" />-->
 
         <!-- LeanCloud 必须的服务声明 -->
         <service android:name="cn.leancloud.push.PushService" />

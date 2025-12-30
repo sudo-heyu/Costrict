@@ -26,6 +26,7 @@ import com.heyu.safetybelt.operator.fragment.WorkRecordFragment
 import com.heyu.safetybelt.operator.model.WorkRecordManager
 import com.heyu.safetybelt.operator.fragment.ProfileFragment
 import com.heyu.safetybelt.operator.fragment.SafetybeltFragment
+import com.heyu.safetybelt.operator.service.BleService
 
 class MainActivityOperator : AppCompatActivity() {
     private lateinit var bottomNavigation: BottomNavigationView
@@ -201,6 +202,17 @@ class MainActivityOperator : AppCompatActivity() {
             }
             transaction.commit()
             true
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // 应用被销毁时，确保服务也收到通知更新云端状态
+        try {
+            val intent = Intent(this, BleService::class.java)
+            stopService(intent)
+        } catch (e: Exception) {
+            // 忽略错误，因为应用可能已经在销毁过程中
         }
     }
 

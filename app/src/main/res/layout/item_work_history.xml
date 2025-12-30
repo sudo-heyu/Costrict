@@ -28,7 +28,7 @@
                 android:layout_width="16dp"
                 android:layout_height="16dp"
                 android:src="@android:drawable/ic_menu_my_calendar"
-                app:tint="@color/text_secondary" />
+                app:tint="@color/text_primary_dark" />
 
             <TextView
                 android:id="@+id/history_date_text"
@@ -36,7 +36,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:textColor="@color/text_primary"
+                android:textColor="@color/text_primary_dark"
                 android:textSize="16sp"
                 android:textStyle="bold"
                 tools:text="2024年5月30日" />
@@ -66,7 +66,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:textColor="@color/text_secondary"
+                    android:textColor="@color/text_primary_dark"
                     android:textSize="14sp"
                     tools:text="开始: 08:30" />
             </LinearLayout>
@@ -89,7 +89,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:textColor="@color/text_secondary"
+                    android:textColor="@color/text_primary_dark"
                     android:textSize="14sp"
                     tools:text="结束: 17:30" />
             </LinearLayout>
@@ -112,7 +112,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
-                    android:textColor="@color/text_secondary"
+                    android:textColor="@color/text_primary_dark"
                     android:textSize="14sp"
                     tools:text="时长: 8小时" />
             </LinearLayout>
@@ -136,6 +136,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:textSize="14sp"
+                    android:textColor="@color/text_secondary_dark"
                     tools:text="发生报警：否" />
             </LinearLayout>
 
@@ -158,6 +159,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:textSize="14sp"
+                    android:textColor="@color/text_secondary_dark"
                     tools:text="远程报警：否" />
             </LinearLayout>
 

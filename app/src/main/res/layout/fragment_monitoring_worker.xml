@@ -23,7 +23,7 @@
         android:gravity="center_vertical"
         android:padding="8dp"
         android:text="返回"
-        android:textColor="@color/darkblue"
+        android:textColor="@color/text_primary_dark"
         android:textSize="16sp"
         android:textStyle="bold" />
 
@@ -53,7 +53,8 @@
                     android:layout_height="wrap_content"
                     android:text="部位"
                     android:textStyle="bold"
-                    android:textSize="16sp" />
+                    android:textSize="16sp"
+                    android:textColor="@color/text_primary_dark" />
 
                 <TextView
                     android:layout_width="0dp"
@@ -62,13 +63,14 @@
                     android:gravity="center"
                     android:text="状态"
                     android:textStyle="bold"
-                    android:textSize="16sp" />
+                    android:textSize="16sp"
+                    android:textColor="@color/text_primary_dark" />
             </LinearLayout>
 
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="@color/light_black"
+                android:background="@color/sensor_slot_border_dark"
                 android:layout_marginStart="8dp"
                 android:layout_marginEnd="8dp"/>
 

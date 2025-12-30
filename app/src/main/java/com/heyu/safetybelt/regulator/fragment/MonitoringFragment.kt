@@ -92,6 +92,9 @@ class MonitoringFragment : Fragment(), UnderService.WorkerListListener {
         binding.recyclerView.adapter = adapter
 
         binding.fab.setOnClickListener { showAddWorkerDialog() }
+        
+        // 设置减号按钮点击事件
+        binding.fabRemove.setOnClickListener { showRemoveWorkerSelectionDialog() }
 
         // Setup ItemTouchHelper for swipe-to-delete with confirmation
         val itemTouchHelperCallback = object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.LEFT) {
@@ -293,9 +296,67 @@ class MonitoringFragment : Fragment(), UnderService.WorkerListListener {
             .show()
     }
 
+    private fun showRemoveWorkerSelectionDialog() {
+        val workerList = adapter.getItems()
+        if (workerList.isEmpty()) {
+            Toast.makeText(context, "当前没有监控的工人", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val workerNames = workerList.map { "${it.workerName} (${it.workerId})" }.toTypedArray()
+        val selectedWorkers = mutableListOf<WorkerStatus>()
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("选择要删除的工人")
+            .setMultiChoiceItems(workerNames, null) { _, which, isChecked ->
+                if (isChecked) {
+                    selectedWorkers.add(workerList[which])
+                } else {
+                    selectedWorkers.remove(workerList[which])
+                }
+            }
+            .setPositiveButton("删除选中") { _, _ ->
+                if (selectedWorkers.isNotEmpty()) {
+                    showRemoveWorkersConfirmationDialog(selectedWorkers)
+                } else {
+                    Toast.makeText(context, "请选择要删除的工人", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showRemoveWorkersConfirmationDialog(workersToRemove: List<WorkerStatus>) {
+        val workerNames = workersToRemove.joinToString(", ") { it.workerName }
+        
+        AlertDialog.Builder(requireContext())
+            .setTitle("确认删除")
+            .setMessage("确定要停止监控以下工人吗？\n$workerNames")
+            .setPositiveButton("确定") { _, _ ->
+                workersToRemove.forEach { worker ->
+                    underService?.removeWorker(worker.workerId)
+                }
+                val message = if (workersToRemove.size == 1) {
+                    "已移除 ${workersToRemove[0].workerName}"
+                } else {
+                    "已移除 ${workersToRemove.size} 个工人"
+                }
+                Snackbar.make(binding.root, message, Snackbar.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun updateEmptyViewVisibility() {
         val hasWorkers = adapter.itemCount > 0
         binding.emptyView.visibility = if (hasWorkers) View.GONE else View.VISIBLE
         binding.recyclerView.visibility = if (hasWorkers) View.VISIBLE else View.GONE
+        
+        // 更新空状态提示文本
+        binding.emptyView.text = if (hasWorkers) {
+            ""
+        } else {
+            "点击右下角 '+' 添加要监控的工人\n或点击 '-' 移除已监控的工人"
+        }
     }
 }

@@ -3,6 +3,7 @@ package com.heyu.safetybelt.regulator.service
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -21,10 +22,12 @@ import cn.leancloud.LCQuery
 import cn.leancloud.livequery.LCLiveQuery
 import cn.leancloud.livequery.LCLiveQueryEventHandler
 import cn.leancloud.livequery.LCLiveQuerySubscribeCallback
+import androidx.core.app.NotificationCompat
 import com.heyu.safetybelt.R
 import com.heyu.safetybelt.common.WorkSession
 import com.heyu.safetybelt.common.Worker
 import com.heyu.safetybelt.common.WorkerStatus
+import com.heyu.safetybelt.regulator.activity.MainActivityRegulator
 import io.reactivex.Observer
 import io.reactivex.disposables.Disposable
 import java.util.Date
@@ -115,8 +118,6 @@ class UnderService : Service() {
         notifyListener()
         restartLiveQuery()
     }
-
-// E:/AndroidStudioProject/SafetyBelt/app/src/main/java/com/heyu/safetybelt/regulator/service/UnderService.kt
 
     fun findAndAddWorker(workerName: String, workerNumber: String) {
         // 1. 立即检查本地列表是否已存在（按姓名和工号）
@@ -215,14 +216,37 @@ class UnderService : Service() {
     private fun startForegroundService() {
         val channelId = "UnderServiceChannel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "Under Service", NotificationManager.IMPORTANCE_DEFAULT)
+            val channel = NotificationChannel(channelId, "安监员后台监控服务", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "实时监控工人作业安全状态"
+                enableLights(true)
+                lightColor = android.graphics.Color.BLUE
+                enableVibration(false)
+                setShowBadge(false)
+                setSound(null, null)
+                // Android 13+ 需要用户明确授权
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    importance = NotificationManager.IMPORTANCE_HIGH
+                }
+            }
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
-        val notification: Notification = Notification.Builder(this, channelId)
-            .setContentTitle("SafetyBeltRegulator")
-            .setContentText("Monitoring service is running.")
+
+        val notificationIntent = Intent(this, MainActivityRegulator::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification: Notification = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("安监员监控服务")
+            .setContentText("正在实时监控工人作业安全状态")
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOngoing(true)
             .build()
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {

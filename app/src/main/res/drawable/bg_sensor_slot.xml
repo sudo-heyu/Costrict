@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#F7F7F7" />
+    <solid android:color="@color/sensor_slot_background_dark" />
     <corners android:radius="6dp" />
-    <stroke android:width="1dp" android:color="#EEEEEE" />
+    <stroke android:width="1dp" android:color="@color/sensor_slot_border_dark" />
 </shape>

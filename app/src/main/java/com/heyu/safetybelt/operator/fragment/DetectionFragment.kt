@@ -154,7 +154,7 @@ class DetectionFragment : Fragment() {
             wgdDevices.clear()
             xykDevices.clear()
         } else {
-             Log.d("DetectionFragment", "Same user detected: $currentWorkerId. State preserved.")
+            Log.d("DetectionFragment", "Same user detected: $currentWorkerId. State preserved.")
         }
 
         setupUI()
@@ -183,7 +183,7 @@ class DetectionFragment : Fragment() {
 
     private fun saveDeviceLists() {
         if (!::sharedPreferences.isInitialized) return
-        
+
         fun deviceListToInfoList(list: List<DeviceScanResult>): List<SavedDeviceInfo> {
             return list.map { SavedDeviceInfo(it.device.address, it.bestName) }
         }
@@ -203,11 +203,11 @@ class DetectionFragment : Fragment() {
             return
         }
         if (!::sharedPreferences.isInitialized) {
-             if(currentWorkerId != null) {
-                 sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
-             } else { 
-                 return
-             }
+            if(currentWorkerId != null) {
+                sharedPreferences = requireActivity().getSharedPreferences("DeviceLists_$currentWorkerId", Context.MODE_PRIVATE)
+            } else {
+                return
+            }
         }
 
         val type = object : TypeToken<List<SavedDeviceInfo>>() {}.type
@@ -225,7 +225,7 @@ class DetectionFragment : Fragment() {
             }
             return CopyOnWriteArrayList(deviceList)
         }
-        
+
         hbsDevices = infoListToDeviceList(sharedPreferences.getString("hbs_devices", null))
         wgdDevices = infoListToDeviceList(sharedPreferences.getString("wgd_devices", null))
         xykDevices = infoListToDeviceList(sharedPreferences.getString("xyk_devices", null))
@@ -252,7 +252,7 @@ class DetectionFragment : Fragment() {
                     xykDevices.add(device)
                 } else {
                     activity?.runOnUiThread {
-                        if (isAdded) Toast.makeText(context, "胸腰扣设备只能选择一个", Toast.LENGTH_SHORT).show()
+                        if (isAdded) Toast.makeText(context, "腰扣设备只能选择一个", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -375,11 +375,11 @@ class DetectionFragment : Fragment() {
             // Case 1: First time - Start Session and Connect
             Log.d("DetectionFragment", "No active session found. Starting new cloud work.")
             Toast.makeText(requireContext(), "正在启动云端作业...", Toast.LENGTH_SHORT).show()
-            
+
             startWorkSession(
                 onSessionStarted = { sessionId ->
                     WorkRecordManager.startNewWork(requireContext())
-                    
+
                     val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
                         action = BleService.ACTION_CONNECT_DEVICES
                         putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allSelectedDevices)
@@ -390,7 +390,7 @@ class DetectionFragment : Fragment() {
                     } else {
                         requireContext().startService(serviceIntent)
                     }
-                    
+
                     navigateToMonitoring(allSelectedDevices)
                 },
                 onSessionFailed = { error ->
@@ -402,14 +402,14 @@ class DetectionFragment : Fragment() {
         } else {
             // Case 2: Session exists - Update and Navigate
             Log.d("DetectionFragment", "Active session found: $currentSessionId. Updating devices.")
-            
+
             // Tell the service to connect any NEW devices in the list
             val serviceIntent = Intent(requireContext(), BleService::class.java).apply {
                 action = BleService.ACTION_CONNECT_SPECIFIC
                 putParcelableArrayListExtra(BleService.EXTRA_DEVICES, allSelectedDevices)
             }
             requireContext().startService(serviceIntent)
-            
+
             val monitoringFragment = parentFragmentManager.findFragmentByTag(MONITORING_FRAGMENT_TAG) as? MonitoringFragment
             if (monitoringFragment != null && monitoringFragment.isAdded) {
                 monitoringFragment.updateDevices(allSelectedDevices)
@@ -582,8 +582,8 @@ class DetectionFragment : Fragment() {
         deviceLastSeen[deviceAddress] = System.currentTimeMillis()
 
         val isAlreadySelected = hbsDevices.any { it.device.address == deviceAddress } ||
-                                wgdDevices.any { it.device.address == deviceAddress } ||
-                                xykDevices.any { it.device.address == deviceAddress }
+                wgdDevices.any { it.device.address == deviceAddress } ||
+                xykDevices.any { it.device.address == deviceAddress }
 
         if (isAlreadySelected) {
             scannedDevicesMap.remove(deviceAddress)

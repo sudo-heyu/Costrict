@@ -135,7 +135,7 @@ class MonitoringFragment : Fragment() {
     companion object {
         private const val TAG = "MonitoringFragment"
         private const val SINGLE_HOOK_COUNTDOWN_SECONDS = 20
-        val SENSOR_TYPES = mapOf(1 to "后背绳高挂", 2 to "后背绳小钩", 3 to "围杆带环抱", 4 to "围杆带钩", 5 to "胸腰扣", 6 to "后背绳大钩")
+        val SENSOR_TYPES = mapOf(1 to "后背绳高挂", 2 to "后背绳小钩", 3 to "围杆带环抱", 4 to "围杆带钩", 5 to "腰扣", 6 to "后背绳大钩")
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {

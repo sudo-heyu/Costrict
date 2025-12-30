@@ -33,7 +33,7 @@
             android:orientation="vertical"
             app:layout_constraintGuide_percent="0.5" />
 
-        <!-- 用于上下分割状态区域和“胸腰扣”区域的水平辅助线 -->
+        <!-- 用于上下分割状态区域和“腰扣”区域的水平辅助线 -->
         <androidx.constraintlayout.widget.Guideline
             android:id="@+id/guideline_horizontal_internal"
             android:layout_width="wrap_content"
@@ -112,7 +112,7 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/guideline_horizontal_internal" />
 
-        <!-- “胸腰扣”区域 (单行显示) -->
+        <!-- “腰扣”区域 (单行显示) -->
         <TextView
             android:id="@+id/xyk_status_box_title"
             android:layout_width="wrap_content"
@@ -120,7 +120,7 @@
             android:layout_marginStart="8dp"
             android:paddingTop="8dp"
             android:paddingBottom="8dp"
-            android:text="胸腰扣:"
+            android:text="腰扣:"
             android:textAppearance="@style/TextAppearance.MaterialComponents.Subtitle1"
             android:textStyle="bold"
             app:layout_constraintBottom_toBottomOf="parent"
@@ -147,7 +147,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:contentDescription="移除胸腰扣"
+            android:contentDescription="移除腰扣"
             android:src="@drawable/ic_remove_circle"
             app:tint="@android:color/holo_red_dark"
             android:visibility="gone"

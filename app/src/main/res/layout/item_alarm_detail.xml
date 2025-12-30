@@ -12,7 +12,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="1.2"
         android:text="10:30:05"
-        android:textColor="#333333"/>
+        android:textColor="@color/text_primary_dark"/>
 
     <TextView
         android:id="@+id/tvAlarmSensor"
@@ -20,7 +20,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="2"
         android:text="后背绳高挂"
-        android:textColor="#333333"/>
+        android:textColor="@color/text_primary_dark"/>
 
     <TextView
         android:id="@+id/tvAlarmType"
@@ -37,7 +37,7 @@
         android:layout_height="wrap_content"
         android:layout_weight="1.2"
         android:text="持续中..."
-        android:textColor="#666666"
+        android:textColor="@color/text_secondary_dark"
         android:gravity="end"/>
 
 </LinearLayout>

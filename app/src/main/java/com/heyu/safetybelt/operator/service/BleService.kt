@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
@@ -35,10 +36,12 @@ import com.heyu.safetybelt.R
 import com.heyu.safetybelt.common.AlarmEvent
 import com.heyu.safetybelt.operator.model.DeviceScanResult
 import com.heyu.safetybelt.common.WorkSession
+import com.heyu.safetybelt.operator.activity.MainActivityOperator
 import io.reactivex.Observer
 import io.reactivex.disposables.CompositeDisposable
 import io.reactivex.disposables.Disposable
 import java.util.Collections
+import androidx.core.app.NotificationCompat
 import java.util.Date
 import java.util.LinkedList
 import java.util.Locale
@@ -116,7 +119,17 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         }
 
                         override fun onError(e: Throwable) {
-                            Log.e(TAG, " 蹦蹦猪，云端打卡失败: ${e.message}")
+                            val exception = e as? Exception ?: Exception(e)
+                            Log.e(TAG, " 蹦蹦猪，云端打卡失败: ${exception.message}")
+                            // 心跳失败时，尝试使用 saveEventually 作为后备
+                            try {
+                                val fallbackSession = LCObject.createWithoutData("WorkSession", sid)
+                                fallbackSession.put("lastHeartbeat", Date())
+                                fallbackSession.saveEventually()
+                                Log.d(TAG, "心跳失败后备方案已启动")
+                            } catch (fallbackException: Exception) {
+                                Log.e(TAG, "心跳后备方案也失败: ${fallbackException.message}")
+                            }
                         }
 
                         override fun onComplete() {}
@@ -163,10 +176,19 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+
+        val notificationIntent = Intent(this, MainActivityOperator::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setContentTitle("安全带卫士")
             .setContentText("正在后台保护您的作业安全")
             .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .build()
         startForeground(NOTIFICATION_ID, notification)
 
@@ -264,10 +286,18 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         Log.e(TAG, "BleService onDestroy called. isShuttingDown: $isShuttingDown")
-        if (!isShuttingDown) {
-            performEmergencyCloudSync()
+        
+        // 确保云端状态被更新为离线，无论是否已经在关闭过程中
+        currentSessionId?.let { sessionId ->
+            if (!isShuttingDown) {
+                // 如果还没有开始关闭过程，执行紧急同步
+                performEmergencyCloudSyncInTaskRemoved(sessionId)
+            } else {
+                // 如果已经在关闭过程中，至少尝试更新状态
+                updateCloudStatusForOffline(sessionId)
+            }
         }
-
+        
         super.onDestroy()
         if (isTtsInitialized) {
             tts.stop()
@@ -284,45 +314,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         val sid = currentSessionId
         Log.e(TAG, "BleService onTaskRemoved! Triggering last-will for session: $sid")
 
-        if (!sid.isNullOrEmpty() && !isShuttingDown) {
+        if (!sid.isNullOrEmpty()) {
             isShuttingDown = true
             Log.d(TAG, "onTaskRemoved called, finalizing cloud state for session $sid")
-
-            val latch = CountDownLatch(1)
-            Thread {
-                try {
-                    endSessionInternal("离线", true)
-                    Log.d(TAG, "Final session update completed successfully")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Final session update error: ${e.message}")
-                } finally {
-                    latch.countDown()
-                }
-            }.start()
-
-            try {
-                if (!latch.await(3500, TimeUnit.MILLISECONDS)) {
-                    Log.w(TAG, "Final session update timed out")
-                }
-                // 蹦蹦猪，双保险
-                val session = LCObject.createWithoutData("WorkSession", sid)
-                session.put("isOnline", false)
-                session.put("currentStatus", "手动断开")
-                session.put("endTime", Date())
-                for (i in 1..6) {
-                    session.put("sensor${i}Status", "未连接")
-                }
-
-                val user = LCUser.getCurrentUser()
-                user?.put("isOnline", false)
-
-                session.saveEventually()
-                user?.saveEventually()
-
-                Thread.sleep(300)
-            } catch (e: Exception) {
-                Log.e(TAG, "Final session update interrupted", e)
-            }
+            
+            // 立即执行紧急同步，不惜一切代价尝试发送数据
+            performEmergencyCloudSyncInTaskRemoved(sid)
         }
 
         cleanupConnectionsAndState(true)
@@ -365,7 +362,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
                 override fun onNext(t: LCObject) {}
                 override fun onError(e: Throwable) {
-                    Log.e(TAG, "Async session save failed: ${e.message}")
+                    val exception = e as? Exception ?: Exception(e)
+                    Log.e(TAG, "Async session save failed: ${exception.message}")
                 }
 
                 override fun onComplete() {}
@@ -376,7 +374,10 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onNext(t: LCObject) {}
-                override fun onError(e: Throwable) {}
+                override fun onError(e: Throwable) {
+                    val exception = e as? Exception ?: Exception(e)
+                    Log.e(TAG, "Async user save failed: ${exception.message}")
+                }
                 override fun onComplete() {}
             })
         }
@@ -432,6 +433,151 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * 专门用于 onTaskRemoved 的紧急同步方法
+     * 核心思路：立即、同步地执行一次网络请求，不惜一切代价尝试发送数据
+     */
+    private fun performEmergencyCloudSyncInTaskRemoved(sessionId: String) {
+        Log.e(TAG, "!! EMERGENCY SYNC IN TASK REMOVED START !! Session: $sessionId")
+        
+        // 设置关闭标志，防止其他操作干扰
+        isShuttingDown = true
+        
+        // 允许网络访问，忽略严格模式限制
+        val oldPolicy = android.os.StrictMode.getThreadPolicy()
+        android.os.StrictMode.setThreadPolicy(
+            android.os.StrictMode.ThreadPolicy.Builder()
+                .permitAll()
+                .build()
+        )
+        
+        try {
+            // 创建倒计时锁，确保同步执行完成
+            val latch = CountDownLatch(1)
+            var syncSuccess = false
+            
+            // 更新工作会话状态
+            val session = LCObject.createWithoutData("WorkSession", sessionId)
+            session.put("currentStatus", "应用被清除")
+            session.put("isOnline", false)
+            session.put("endTime", Date())
+            // 更新所有传感器状态为未连接
+            for (i in 1..6) {
+                session.put("sensor${i}Status", "未连接")
+            }
+            
+            // 更新用户在线状态
+            val user = LCUser.getCurrentUser()
+            user?.put("isOnline", false)
+            
+            // 使用同步保存，确保立即执行
+            session.saveInBackground().subscribe(object : Observer<LCObject> {
+                override fun onSubscribe(d: Disposable) {
+                    // 不需要添加到 compositeDisposable，因为服务即将销毁
+                }
+                
+                override fun onNext(t: LCObject) {
+                    syncSuccess = true
+                    Log.e(TAG, "!! SESSION SYNC SUCCESS !!")
+                    latch.countDown()
+                }
+                
+                override fun onError(e: Throwable) {
+                    Log.e(TAG, "!! SESSION SYNC FAILED: ${e.message} !!")
+                    latch.countDown()
+                }
+                
+                override fun onComplete() {}
+            })
+            
+            // 等待同步完成（最多等待3秒）
+            try {
+                latch.await(3, TimeUnit.SECONDS)
+            } catch (e: InterruptedException) {
+                Log.e(TAG, "!! SYNC INTERRUPTED !!")
+            }
+            
+            // 如果同步失败，尝试 saveEventually 作为后备方案
+            if (!syncSuccess) {
+                Log.e(TAG, "!! FALLING BACK TO SAVE EVENTUALLY !!")
+                try {
+                    val fallbackSession = LCObject.createWithoutData("WorkSession", sessionId)
+                    fallbackSession.put("isOnline", false)
+                    fallbackSession.put("currentStatus", "应用被清除")
+                    fallbackSession.put("endTime", Date())
+                    fallbackSession.saveEventually()
+                    
+                    user?.saveEventually()
+                    
+                    Log.e(TAG, "!! SAVE EVENTUALLY INITIATED !!")
+                } catch (fallbackException: Exception) {
+                    Log.e(TAG, "!! FALLBACK SAVE ALSO FAILED: ${fallbackException.message} !!")
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "!! EMERGENCY SYNC EXCEPTION: ${e.message} !!", e)
+            // 最后的后备方案：至少尝试 saveEventually
+            try {
+                val lastFallback = LCObject.createWithoutData("WorkSession", sessionId)
+                lastFallback.put("isOnline", false)
+                lastFallback.saveEventually()
+            } catch (ignore: Exception) {
+                Log.e(TAG, "!! LAST RESORT FAILED !!")
+            }
+        } finally {
+            // 恢复原始策略
+            android.os.StrictMode.setThreadPolicy(oldPolicy)
+            Log.e(TAG, "!! EMERGENCY SYNC IN TASK REMOVED COMPLETED !!")
+        }
+    }
+
+    private fun updateCloudStatusForOffline(sessionId: String) {
+        Log.d(TAG, "Updating cloud status for offline session: $sessionId")
+        
+        // 确保网络策略允许网络访问
+        val oldPolicy = android.os.StrictMode.getThreadPolicy()
+        android.os.StrictMode.setThreadPolicy(
+            android.os.StrictMode.ThreadPolicy.Builder().permitAll().build()
+        )
+        
+        try {
+            // 更新工作会话状态
+            val session = LCObject.createWithoutData("WorkSession", sessionId)
+            session.put("currentStatus", "离线")
+            session.put("isOnline", false)
+            session.put("endTime", Date())
+            // 更新所有传感器状态为未连接
+            for (i in 1..6) {
+                session.put("sensor${i}Status", "未连接")
+            }
+            
+            // 更新用户在线状态
+            val user = LCUser.getCurrentUser()
+            user?.put("isOnline", false)
+            
+            // 使用 saveEventually 确保即使应用被终止也会尝试保存数据
+            session.saveEventually()
+            user?.saveEventually()
+            
+            Log.d(TAG, "Cloud status update initiated for offline session: $sessionId")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update cloud status for offline: ${e.message}", e)
+            // 如果直接调用失败，至少尝试 saveEventually
+            try {
+                val fallbackSession = LCObject.createWithoutData("WorkSession", sessionId)
+                fallbackSession.put("isOnline", false)
+                fallbackSession.saveEventually()
+            } catch (fallbackException: Exception) {
+                Log.e(TAG, "Fallback save also failed: ${fallbackException.message}", fallbackException)
+            }
+        } finally {
+            // 恢复原始策略
+            android.os.StrictMode.setThreadPolicy(oldPolicy)
+        }
+    }
+
     private fun startLiveQuery(sessionId: String) {
         stopLiveQuery()
         val query = LCQuery<WorkSession>("WorkSession").whereEqualTo("objectId", sessionId)
@@ -469,7 +615,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 }
             }
 
-            override fun onError(e: Throwable) {}
+            override fun onError(e: Throwable) {
+                val exception = e as? Exception ?: Exception(e)
+            }
             override fun onComplete() {}
         })
     }
@@ -480,7 +628,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resetAdminAlert() {
-        val sid = currentSessionId ?: return
+        val sid = currentSessionId ?: run { return }
         val session = LCObject.createWithoutData("WorkSession", sid)
         session.put("adminAlert", false)
         session.saveInBackground().subscribe(object : Observer<LCObject> {
@@ -489,7 +637,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onNext(t: LCObject) {}
-            override fun onError(e: Throwable) {}
+            override fun onError(e: Throwable) {
+                val exception = e as? Exception ?: Exception(e)
+            }
             override fun onComplete() {}
         })
     }
@@ -666,9 +816,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun processNextSubscription(address: String) {
-        val state = deviceStates[address] ?: return
+        val state = deviceStates[address] ?: run { return }
         val char = state.subscriptionQueue.poll() ?: run {
-            broadcastStatus(address, "正常", "GREEN", false)
+            broadcastStatus(address, "正常", "GREEN", true)
             return
         }
         state.gatt?.setCharacteristicNotification(char, true)
@@ -866,7 +1016,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onNext(t: LCObject) {}
-            override fun onError(e: Throwable) {}
+            override fun onError(e: Throwable) {
+                val exception = e as? Exception ?: Exception(e)
+            }
             override fun onComplete() {}
         })
     }
@@ -925,7 +1077,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                     }
 
                     override fun onNext(t: LCObject) {}
-                    override fun onError(e: Throwable) {}
+                    override fun onError(e: Throwable) {
+                        val exception = e as? Exception ?: Exception(e)
+                    }
                     override fun onComplete() {}
                 })
             }
@@ -968,9 +1122,19 @@ class BleService : Service(), TextToSpeech.OnInitListener {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(NOTIFICATION_CHANNEL_ID, "安全带后台服务", NotificationManager.IMPORTANCE_DEFAULT)
-            )
+            val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, "安全带后台服务", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "安全带卫士后台保护服务通知"
+                enableLights(true)
+                lightColor = android.graphics.Color.RED
+                enableVibration(false)
+                setShowBadge(false)
+                setSound(null, null)
+                // Android 13+ 需要用户明确授权
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    importance = NotificationManager.IMPORTANCE_HIGH
+                }
+            }
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
@@ -1029,7 +1193,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             2 to "后背绳小钩",
             3 to "围杆带环抱",
             4 to "围杆带钩",
-            5 to "胸扣",
+            5 to "腰扣",
             6 to "后背绳大钩"
         )
         val SINGLE_HOOK_COMBINATIONS = setOf(

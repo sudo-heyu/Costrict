@@ -19,7 +19,8 @@
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="16dp"
         android:text="异常警报"
-        android:textAppearance="?attr/textAppearanceHeadline6" />
+        android:textAppearance="?attr/textAppearanceHeadline6"
+        android:textColor="@color/text_primary_dark" />
 
     <TextView
         android:id="@+id/dialog_message"
@@ -27,7 +28,8 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="8dp"
-        android:textAlignment="center" />
+        android:textAlignment="center"
+        android:textColor="@color/text_secondary_dark" />
 
     <Button
         android:id="@+id/dialog_button"
