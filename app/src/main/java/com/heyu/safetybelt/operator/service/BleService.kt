@@ -1,5 +1,4 @@
 package com.heyu.safetybelt.operator.service
-
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -52,18 +51,14 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.collections.get
-
 @SuppressLint("MissingPermission")
 class BleService : Service(), TextToSpeech.OnInitListener {
-
     private enum class ConnectionStatus {
         CONNECTING, CONNECTED, DISCONNECTED, FAILED, TIMEOUT, RECONNECTING
     }
-
     private enum class SensorStatus {
         NORMAL, SINGLE_HOOK, ALARM, UNKNOWN
     }
-
     private data class DeviceState(
         val device: DeviceScanResult,
         var gatt: BluetoothGatt? = null,
@@ -76,32 +71,25 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         var singleHookTimer: Runnable? = null,
         var singleHookTimerExpired: Boolean = false
     )
-
     private val deviceStates = ConcurrentHashMap<String, DeviceState>()
     private val compositeDisposable = CompositeDisposable()
     private var liveQuery: LCLiveQuery? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val reconnectHandler = Handler(Looper.getMainLooper())
-
     // 蹦蹦猪专用隔离 Handler，防止心跳被 mainHandler.removeCallbacksAndMessages 清掉
     private val heartbeatHandler = Handler(Looper.getMainLooper())
-
     private lateinit var tts: TextToSpeech
     private var isTtsInitialized = false
     private val alarmMessageQueue = Collections.synchronizedList(mutableListOf<String>())
     private var currentAlarmIndex = 0
-
     @Volatile
     private var isAlarmLoopRunning = false
-
     @Volatile
     private var isMuted = false
     private val muteRunnable = Runnable { isMuted = false }
     private var isShuttingDown = false
-
     // 蹦蹦猪高詹子慧心跳逻辑：每 5 秒给云端报个平安
     private val HEARTBEAT_INTERVAL_MS = 5000L
-
     private val heartbeatRunnable = object : Runnable {
         override fun run() {
             val sid = currentSessionId
@@ -114,11 +102,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         override fun onSubscribe(d: Disposable) {
                             compositeDisposable.add(d)
                         }
-
                         override fun onNext(t: LCObject) {
                             Log.d(TAG, "蹦蹦猪云端打卡成功")
                         }
-
                         override fun onError(e: Throwable) {
                             val exception = e as? Exception ?: Exception(e)
                             Log.e(TAG, " 蹦蹦猪，云端打卡失败: ${exception.message}")
@@ -132,7 +118,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                                 Log.e(TAG, "心跳后备方案也失败: ${fallbackException.message}")
                             }
                         }
-
                         override fun onComplete() {}
                     })
                 } catch (e: Exception) {
@@ -144,7 +129,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts.setLanguage(Locale.CHINESE)
@@ -157,7 +141,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                             mainHandler.postDelayed({ playNextAlarmInQueue() }, 500)
                         }
                     }
-
                     override fun onError(utteranceId: String?) {
                         if (utteranceId == ALARM_UTTERANCE_ID) {
                             mainHandler.postDelayed({ playNextAlarmInQueue() }, 500)
@@ -167,13 +150,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-
     override fun onBind(intent: Intent?): IBinder? = null
-
     override fun onCreate() {
         super.onCreate()
         tts = TextToSpeech(this, this)
-        
+
         // 恢复之前保存的sessionId
         val sharedPrefs = getSharedPreferences("BleService_Backup", Context.MODE_PRIVATE)
         val savedSessionId = sharedPrefs.getString("active_session_id", null)
@@ -182,51 +163,21 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "恢复保存的sessionId: $savedSessionId")
         }
     }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-
-        // 只在服务首次启动时显示通知，避免重复显示
-        if (flags == 0) { // flags == 0 表示这是服务的首次启动，不是重启
-            val notificationIntent = Intent(this, MainActivityOperator::class.java)
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, notificationIntent,
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            )
-
-            // 获取当前连接状态信息用于通知内容
-            val connectedCount = deviceStates.values.count { it.connectionStatus == ConnectionStatus.CONNECTED }
-            val totalCount = deviceStates.size
-            val notificationText = if (totalCount > 0) {
-                "已连接 $connectedCount/$totalCount 个设备，正在监控安全带状态"
-            } else {
-                "正在后台保护您的作业安全"
+        // 处理设备连接逻辑，确保设备状态正确更新
+        when (intent?.action) {
+            ACTION_CONNECT_DEVICES, ACTION_CONNECT_SPECIFIC -> {
+                val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
+                devices?.forEach {
+                    if (!deviceStates.containsKey(it.deviceAddress)) {
+                        deviceStates[it.deviceAddress] = DeviceState(it)
+                    }
+                }
             }
-
-            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("安全带卫士 - 后台监控中")
-                .setContentText(notificationText)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
-                .setContentIntent(pendingIntent)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setPriority(NotificationCompat.PRIORITY_MAX) // 最高优先级
-                .setCategory(NotificationCompat.CATEGORY_ALARM) // 告警类别，确保锁屏显示
-                .setOngoing(true) // 设置为持续通知，显示在锁屏界面
-                .setShowWhen(true)
-                .setWhen(System.currentTimeMillis())
-                .setOnlyAlertOnce(true)
-                // 添加扩展内容，在锁屏界面显示更多信息
-                .setStyle(NotificationCompat.BigTextStyle()
-                    .bigText(notificationText + "\n\n点击返回应用查看详细监控状态"))
-                // 确保在Android 15上显示
-                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-                .build()
-            
-            // 只显示一个通知 - 前台服务通知，不再显示额外的系统通知
-            startForeground(NOTIFICATION_ID, notification)
         }
-
+        // 更新通知内容，确保显示最新的连接状态
+        updateNotification()
         when (intent?.action) {
             ACTION_CONNECT_DEVICES -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
@@ -235,12 +186,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                     currentSessionId = newSessionId
                     getSharedPreferences("BleService_Backup", Context.MODE_PRIVATE)
                         .edit().putString("active_session_id", newSessionId).apply()
-
                     cleanupConnectionsAndState(false)
-
                     heartbeatHandler.removeCallbacks(heartbeatRunnable)
                     heartbeatHandler.post(heartbeatRunnable)
-
                     startLiveQuery(newSessionId)
                     updateWorkSession(isOnline = true, lastHeartbeat = Date())
                 }
@@ -250,9 +198,13 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         connectWithTimeout(it.deviceAddress)
                     }
                 }
+                // 连接设备后更新通知
+                updateNotification()
             }
-
-            ACTION_DISCONNECT_ALL -> disconnectAllDevices(true)
+            ACTION_DISCONNECT_ALL -> {
+                disconnectAllDevices(true)
+                updateNotification()
+            }
             ACTION_CONNECT_SPECIFIC -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
                 devices?.forEach {
@@ -261,37 +213,38 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         connectWithTimeout(it.deviceAddress)
                     }
                 }
+                // 连接特定设备后更新通知
+                updateNotification()
             }
-
             ACTION_DISCONNECT_SPECIFIC -> {
                 intent.getStringArrayListExtra(EXTRA_DEVICES_TO_DISCONNECT)?.forEach {
                     disconnectSpecificDevice(it, true)
                 }
                 evaluateOverallStatus()
+                // 断开设备后更新通知
+                updateNotification()
             }
-
             ACTION_REQUEST_ALL_STATUSES -> broadcastAllStatuses()
             ACTION_RETRY_CONNECTION -> {
                 val addr = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (addr != null && deviceStates.containsKey(addr)) {
                     deviceStates[addr]?.reconnectAttempts = 0
                     connectWithTimeout(addr)
+                    // 重试连接后更新通知
+                    updateNotification()
                 }
             }
-
             ACTION_MUTE_ALARMS -> {
                 isMuted = true
                 mainHandler.removeCallbacks(muteRunnable)
                 mainHandler.postDelayed(muteRunnable, MUTE_DURATION_MS)
                 if (isTtsInitialized) tts.stop()
             }
-
             ACTION_RESET_ADMIN_ALERT -> resetAdminAlert()
         }
         // 蹦蹦猪：改为 NOT_STICKY，划掉就不重启了
         return START_NOT_STICKY
     }
-
     private fun broadcastAllStatuses() {
         deviceStates.values.forEach { state ->
             when (state.connectionStatus) {
@@ -304,24 +257,21 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         else -> broadcastStatus(state.device.deviceAddress, "等待数据", "YELLOW", false)
                     }
                 }
-
                 ConnectionStatus.CONNECTING, ConnectionStatus.RECONNECTING -> broadcastStatus(
                     state.device.deviceAddress,
                     "正在连接...",
                     "BLUE",
                     true
                 )
-
                 ConnectionStatus.FAILED -> broadcastStatus(state.device.deviceAddress, "重连失败", "YELLOW", true)
                 ConnectionStatus.TIMEOUT -> broadcastStatus(state.device.deviceAddress, "超时", "YELLOW", true)
                 else -> broadcastStatus(state.device.deviceAddress, "已断开", "GRAY", false)
             }
         }
     }
-
     override fun onDestroy() {
         Log.e(TAG, "BleService onDestroy called. isShuttingDown: $isShuttingDown")
-        
+
         // 确保云端状态被更新为离线，无论是否已经在关闭过程中
         currentSessionId?.let { sessionId ->
             if (!isShuttingDown) {
@@ -332,7 +282,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 updateCloudStatusForOffline(sessionId)
             }
         }
-        
+
         super.onDestroy()
         if (isTtsInitialized) {
             tts.stop()
@@ -344,28 +294,23 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         compositeDisposable.clear()
         currentSessionId = null
     }
-
     override fun onTaskRemoved(rootIntent: Intent?) {
         val sid = currentSessionId
         Log.e(TAG, "BleService onTaskRemoved! Triggering last-will for session: $sid")
-
         if (!sid.isNullOrEmpty()) {
             isShuttingDown = true
             Log.d(TAG, "onTaskRemoved called, finalizing cloud state for session $sid")
-            
+
             // 立即执行紧急同步，不惜一切代价尝试发送数据
             performEmergencyCloudSyncInTaskRemoved(sid)
         }
-
         cleanupConnectionsAndState(true)
         super.onTaskRemoved(rootIntent)
         stopSelf()
     }
-
     private fun endSessionInternal(statusText: String, isBlocking: Boolean) {
         val sid = currentSessionId ?: return
         Log.d(TAG, "Ending session $sid with status: $statusText, blocking: $isBlocking")
-
         val session = LCObject.createWithoutData("WorkSession", sid)
         session.put("currentStatus", statusText)
         session.put("isOnline", false)
@@ -373,10 +318,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         for (i in 1..6) {
             session.put("sensor${i}Status", "未连接")
         }
-
         val user = LCUser.getCurrentUser()
         user?.put("isOnline", false)
-
         if (isBlocking) {
             try {
                 session.save()
@@ -394,20 +337,17 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 override fun onSubscribe(d: Disposable) {
                     compositeDisposable.add(d)
                 }
-
                 override fun onNext(t: LCObject) {}
                 override fun onError(e: Throwable) {
                     val exception = e as? Exception ?: Exception(e)
                     Log.e(TAG, "Async session save failed: ${exception.message}")
                 }
-
                 override fun onComplete() {}
             })
             user?.saveInBackground()?.subscribe(object : Observer<LCObject> {
                 override fun onSubscribe(d: Disposable) {
                     compositeDisposable.add(d)
                 }
-
                 override fun onNext(t: LCObject) {}
                 override fun onError(e: Throwable) {
                     val exception = e as? Exception ?: Exception(e)
@@ -418,25 +358,20 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SESSION_ENDED))
     }
-
     private fun endSessionSynchronously(statusText: String, isBlocking: Boolean) {
         endSessionInternal(statusText, isBlocking)
     }
-
     private fun performEmergencyCloudSync() {
         val sessionIdToSave = currentSessionId
         if (isShuttingDown || sessionIdToSave.isNullOrEmpty()) return
         isShuttingDown = true
-
         Log.e(TAG, "!! EMERGENCY SYNC START !! Session: $sessionIdToSave")
-
         val oldPolicy = android.os.StrictMode.getThreadPolicy()
         android.os.StrictMode.setThreadPolicy(
             android.os.StrictMode.ThreadPolicy.Builder()
                 .permitAll()
                 .build()
         )
-
         try {
             val session = LCObject.createWithoutData("WorkSession", sessionIdToSave)
             session.put("isOnline", false)
@@ -445,10 +380,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             for (i in 1..6) {
                 session.put("sensor${i}Status", "未连接")
             }
-
             val user = LCUser.getCurrentUser()
             user?.put("isOnline", false)
-
             session.save()
             user?.save()
             Thread.sleep(1000)
@@ -467,17 +400,16 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             android.os.StrictMode.setThreadPolicy(oldPolicy)
         }
     }
-
     /**
      * 专门用于 onTaskRemoved 的紧急同步方法
      * 核心思路：立即、同步地执行一次网络请求，不惜一切代价尝试发送数据
      */
     private fun performEmergencyCloudSyncInTaskRemoved(sessionId: String) {
         Log.e(TAG, "!! EMERGENCY SYNC IN TASK REMOVED START !! Session: $sessionId")
-        
+
         // 设置关闭标志，防止其他操作干扰
         isShuttingDown = true
-        
+
         // 允许网络访问，忽略严格模式限制
         val oldPolicy = android.os.StrictMode.getThreadPolicy()
         android.os.StrictMode.setThreadPolicy(
@@ -485,12 +417,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 .permitAll()
                 .build()
         )
-        
+
         try {
             // 创建倒计时锁，确保同步执行完成
             val latch = CountDownLatch(1)
             var syncSuccess = false
-            
+
             // 更新工作会话状态
             val session = LCObject.createWithoutData("WorkSession", sessionId)
             session.put("currentStatus", "应用被清除")
@@ -500,38 +432,38 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             for (i in 1..6) {
                 session.put("sensor${i}Status", "未连接")
             }
-            
+
             // 更新用户在线状态
             val user = LCUser.getCurrentUser()
             user?.put("isOnline", false)
-            
+
             // 使用同步保存，确保立即执行
             session.saveInBackground().subscribe(object : Observer<LCObject> {
                 override fun onSubscribe(d: Disposable) {
                     // 不需要添加到 compositeDisposable，因为服务即将销毁
                 }
-                
+
                 override fun onNext(t: LCObject) {
                     syncSuccess = true
                     Log.e(TAG, "!! SESSION SYNC SUCCESS !!")
                     latch.countDown()
                 }
-                
+
                 override fun onError(e: Throwable) {
                     Log.e(TAG, "!! SESSION SYNC FAILED: ${e.message} !!")
                     latch.countDown()
                 }
-                
+
                 override fun onComplete() {}
             })
-            
+
             // 等待同步完成（最多等待3秒）
             try {
                 latch.await(3, TimeUnit.SECONDS)
             } catch (e: InterruptedException) {
                 Log.e(TAG, "!! SYNC INTERRUPTED !!")
             }
-            
+
             // 如果同步失败，尝试 saveEventually 作为后备方案
             if (!syncSuccess) {
                 Log.e(TAG, "!! FALLING BACK TO SAVE EVENTUALLY !!")
@@ -541,15 +473,15 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                     fallbackSession.put("currentStatus", "应用被清除")
                     fallbackSession.put("endTime", Date())
                     fallbackSession.saveEventually()
-                    
+
                     user?.saveEventually()
-                    
+
                     Log.e(TAG, "!! SAVE EVENTUALLY INITIATED !!")
                 } catch (fallbackException: Exception) {
                     Log.e(TAG, "!! FALLBACK SAVE ALSO FAILED: ${fallbackException.message} !!")
                 }
             }
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "!! EMERGENCY SYNC EXCEPTION: ${e.message} !!", e)
             // 最后的后备方案：至少尝试 saveEventually
@@ -566,16 +498,15 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             Log.e(TAG, "!! EMERGENCY SYNC IN TASK REMOVED COMPLETED !!")
         }
     }
-
     private fun updateCloudStatusForOffline(sessionId: String) {
         Log.d(TAG, "Updating cloud status for offline session: $sessionId")
-        
+
         // 确保网络策略允许网络访问
         val oldPolicy = android.os.StrictMode.getThreadPolicy()
         android.os.StrictMode.setThreadPolicy(
             android.os.StrictMode.ThreadPolicy.Builder().permitAll().build()
         )
-        
+
         try {
             // 更新工作会话状态
             val session = LCObject.createWithoutData("WorkSession", sessionId)
@@ -586,17 +517,17 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             for (i in 1..6) {
                 session.put("sensor${i}Status", "未连接")
             }
-            
+
             // 更新用户在线状态
             val user = LCUser.getCurrentUser()
             user?.put("isOnline", false)
-            
+
             // 使用 saveEventually 确保即使应用被终止也会尝试保存数据
             session.saveEventually()
             user?.saveEventually()
-            
+
             Log.d(TAG, "Cloud status update initiated for offline session: $sessionId")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Failed to update cloud status for offline: ${e.message}", e)
             // 如果直接调用失败，至少尝试 saveEventually
@@ -630,38 +561,32 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         })
     }
-
     private fun stopLiveQuery() {
         liveQuery?.unsubscribeInBackground(object : LCLiveQuerySubscribeCallback() {
             override fun done(e: LCException?) {}
         })
         liveQuery = null
     }
-
     private fun fetchWorkSessionAndCheckAlert(sessionId: String) {
         LCQuery<WorkSession>("WorkSession").getInBackground(sessionId).subscribe(object : Observer<WorkSession> {
             override fun onSubscribe(d: Disposable) {
                 compositeDisposable.add(d)
             }
-
             override fun onNext(session: WorkSession) {
                 if (session.getBoolean("adminAlert")) {
                     sendAdminAlertBroadcast()
                 }
             }
-
             override fun onError(e: Throwable) {
                 val exception = e as? Exception ?: Exception(e)
             }
             override fun onComplete() {}
         })
     }
-
     private fun sendAdminAlertBroadcast() {
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_SHOW_ADMIN_ALERT))
         triggerVibration()
     }
-
     private fun resetAdminAlert() {
         val sid = currentSessionId ?: run { return }
         val session = LCObject.createWithoutData("WorkSession", sid)
@@ -670,7 +595,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             override fun onSubscribe(d: Disposable) {
                 compositeDisposable.add(d)
             }
-
             override fun onNext(t: LCObject) {}
             override fun onError(e: Throwable) {
                 val exception = e as? Exception ?: Exception(e)
@@ -678,7 +602,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             override fun onComplete() {}
         })
     }
-
     private fun cleanupConnectionsAndState(clearLocalSession: Boolean) {
         mainHandler.removeCallbacksAndMessages(null)
         reconnectHandler.removeCallbacksAndMessages(null)
@@ -693,7 +616,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             currentSessionId = null
         }
     }
-
     private fun disconnectSpecificDevice(address: String, notifyUi: Boolean) {
         val state = deviceStates.remove(address)
         if (state != null) {
@@ -706,7 +628,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         checkAllDevicesDisconnected()
     }
-
     private fun disconnectAllDevices(isManual: Boolean) {
         val addresses = deviceStates.keys.toList()
         if (isManual && !currentSessionId.isNullOrEmpty()) {
@@ -719,7 +640,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         stopSelf()
     }
-
     private fun connectWithTimeout(address: String) {
         val state = deviceStates[address] ?: return
         broadcastStatus(address, "正在连接...", "BLUE", true)
@@ -739,7 +659,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }, CONNECTION_TIMEOUT_MS)
     }
-
     private fun scheduleReconnect(address: String) {
         val state = deviceStates[address] ?: return
         if (state.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
@@ -754,7 +673,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         broadcastStatus(address, "正在重连...", "BLUE", true)
         reconnectHandler.postDelayed({ connectWithTimeout(address) }, RECONNECT_DELAY_MS)
     }
-
     private fun checkAllDevicesDisconnected() {
         val hasAnyActive = deviceStates.values.any {
             it.connectionStatus == ConnectionStatus.CONNECTED ||
@@ -768,7 +686,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
         }
     }
-
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             val address = gatt.device.address
@@ -787,7 +704,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 handleDisconnection(address, "连接失败", "RED", false)
             }
         }
-
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val state = deviceStates[gatt.device.address] ?: return
             if (status == BluetoothGatt.GATT_SUCCESS) {
@@ -803,7 +719,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 handleDisconnection(gatt.device.address, "服务发现失败", "RED", false)
             }
         }
-
         override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 processNextSubscription(gatt.device.address)
@@ -811,7 +726,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 handleDisconnection(gatt.device.address, "订阅失败", "RED", false)
             }
         }
-
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             val state = deviceStates[gatt.device.address] ?: return
             when (characteristic.uuid) {
@@ -820,7 +734,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         broadcastHeartbeat(gatt.device.address, it)
                     }
                 }
-
                 SENSOR_DATA_CHARACTERISTIC_UUID -> {
                     parseSensorData(characteristic.value)?.let { parsed ->
                         val isFirst = state.sensorType == null
@@ -836,7 +749,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-
     private fun handleDisconnection(address: String, statusText: String, color: String, fromUser: Boolean) {
         val state = deviceStates[address] ?: return
         state.gatt?.close()
@@ -849,7 +761,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             scheduleReconnect(address)
         }
     }
-
     private fun processNextSubscription(address: String) {
         val state = deviceStates[address] ?: run { return }
         val char = state.subscriptionQueue.poll() ?: run {
@@ -864,14 +775,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }, 200)
     }
-
     private fun evaluateOverallStatus() {
         val active = deviceStates.values.filter { it.connectionStatus == ConnectionStatus.CONNECTED && it.sensorType != null }
         val abnormalHookTypes = active.filter { it.isAbnormalSignal && it.sensorType != 5 }
             .mapNotNull { it.sensorType?.minus(1) }
             .toSet()
         val isSingle = SINGLE_HOOK_COMBINATIONS.contains(abnormalHookTypes)
-
         deviceStates.values.forEach { state ->
             val prev = state.sensorStatus
             state.sensorStatus = if (state.connectionStatus != ConnectionStatus.CONNECTED) {
@@ -888,7 +797,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 updateDeviceUiAndTimers(state)
             }
         }
-
         val partStatuses = Array(6) { i ->
             val devices = deviceStates.values.filter { it.sensorType == i + 1 }
             if (devices.isEmpty()) {
@@ -912,30 +820,25 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         updateWorkSession(status = overall, partStatuses = partStatuses)
         updateAlarmQueueAndCycle()
     }
-
     private fun updateDeviceUiAndTimers(state: DeviceState) {
         when (state.sensorStatus) {
             SensorStatus.NORMAL -> {
                 cancelSingleHookTimer(state)
                 broadcastStatus(state.device.deviceAddress, "正常", "GREEN", true)
             }
-
             SensorStatus.SINGLE_HOOK -> {
                 startSingleHookTimer(state)
                 broadcastStatus(state.device.deviceAddress, "单挂", "BLACK", true)
             }
-
             SensorStatus.ALARM -> {
                 state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
                 state.singleHookTimer = null
                 broadcastStatus(state.device.deviceAddress, "异常", "RED", true)
                 logAlarmToCloud(state.device.deviceAddress, state.sensorType)
             }
-
             else -> {}
         }
     }
-
     private fun startSingleHookTimer(state: DeviceState) {
         if (state.singleHookTimer != null) return
         state.singleHookTimer = Runnable {
@@ -945,13 +848,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         mainHandler.postDelayed(state.singleHookTimer!!, SINGLE_HOOK_TIMEOUT_MS)
     }
-
     private fun cancelSingleHookTimer(state: DeviceState) {
         state.singleHookTimerExpired = false
         state.singleHookTimer?.let { mainHandler.removeCallbacks(it) }
         state.singleHookTimer = null
     }
-
     private fun stopAlarmCycle() {
         isAlarmLoopRunning = false
         synchronized(alarmMessageQueue) {
@@ -962,7 +863,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             tts.stop()
         }
     }
-
     private fun playNextAlarmInQueue() {
         if (!isAlarmLoopRunning || isMuted || !isTtsInitialized) return
         val msg = synchronized(alarmMessageQueue) {
@@ -981,14 +881,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         tts.speak(msg, TextToSpeech.QUEUE_FLUSH, params, ALARM_UTTERANCE_ID)
     }
-
     private fun updateAlarmQueueAndCycle() {
         val newMsgs = deviceStates.values
             .filter { it.sensorStatus == SensorStatus.ALARM }
             .mapNotNull { SENSOR_TYPE_NAMES[it.sensorType]?.plus(" 异常") }
-
         val shouldStart = !isAlarmLoopRunning && newMsgs.isNotEmpty()
-
         synchronized(alarmMessageQueue) {
             val had = alarmMessageQueue.isNotEmpty()
             alarmMessageQueue.clear()
@@ -1002,7 +899,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 )
             }
         }
-
         if (shouldStart) {
             currentAlarmIndex = 0
             playNextAlarmInQueue()
@@ -1010,7 +906,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             stopAlarmCycle()
         }
     }
-
     private fun parseHeartbeatData(data: ByteArray): HeartbeatInfo? {
         if (data.size != 5 || data[4] != data.slice(0..3).sumOf { it.toInt() and 0xFF }.toByte()) {
             return null
@@ -1023,7 +918,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         return HeartbeatInfo(id, bat)
     }
-
     private fun parseSensorData(data: ByteArray): ParsedSensorData? {
         if (data.size != 6 || data[5] != data.slice(0..4).sumOf { it.toInt() and 0xFF }.toByte()) {
             return null
@@ -1034,7 +928,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         }
         return ParsedSensorData(type, (data[4].toInt() and 0xFF) == 1)
     }
-
     private fun logAlarmToCloud(deviceAddress: String, sensorType: Int?) {
         val sid = currentSessionId ?: return
         val user = LCUser.getCurrentUser() ?: return
@@ -1049,7 +942,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             override fun onSubscribe(d: Disposable) {
                 compositeDisposable.add(d)
             }
-
             override fun onNext(t: LCObject) {}
             override fun onError(e: Throwable) {
                 val exception = e as? Exception ?: Exception(e)
@@ -1057,7 +949,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             override fun onComplete() {}
         })
     }
-
     private fun updateWorkSession(
         status: String? = null,
         isOnline: Boolean? = null,
@@ -1110,7 +1001,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                     override fun onSubscribe(d: Disposable) {
                         compositeDisposable.add(d)
                     }
-
                     override fun onNext(t: LCObject) {}
                     override fun onError(e: Throwable) {
                         val exception = e as? Exception ?: Exception(e)
@@ -1120,7 +1010,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
         }
     }
-
     private fun triggerVibration() {
         if (isMuted) return
         val v = getSystemService(VIBRATOR_SERVICE) as Vibrator
@@ -1130,7 +1019,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             v.vibrate(500)
         }
     }
-
     private fun broadcastStatus(deviceAddress: String, text: String, color: String, showIcon: Boolean) {
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_STATUS_UPDATE).apply {
             putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
@@ -1139,7 +1027,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             putExtra(EXTRA_SHOW_ICON, showIcon)
         })
     }
-
     private fun broadcastHeartbeat(deviceAddress: String, info: HeartbeatInfo) {
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_HEARTBEAT_UPDATE).apply {
             putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
@@ -1147,14 +1034,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             putExtra(EXTRA_BATTERY, info.batteryStatus)
         })
     }
-
     private fun broadcastConnectionState(address: String, isConnected: Boolean) {
         LocalBroadcastManager.getInstance(this).sendBroadcast(Intent(ACTION_CONNECTION_STATE_UPDATE).apply {
             putExtra(EXTRA_DEVICE_ADDRESS, address)
             putExtra(EXTRA_IS_CONNECTED, isConnected)
         })
     }
-
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(NOTIFICATION_CHANNEL_ID, "安全带后台服务", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -1164,40 +1049,86 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 enableVibration(false)
                 setShowBadge(true) // 允许显示徽章
                 setSound(null, null)
-                
+
                 // 关键：确保锁屏显示 - 必须在创建通道前设置
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
-                
+
                 // 允许绕过免打扰模式
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     setBypassDnd(true)
                 }
-                
+
                 // 设置高优先级确保显示
                 importance = NotificationManager.IMPORTANCE_HIGH
-                
+
                 // 确保在Android 13+上显示
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     // 不需要重复设置importance，已在构造函数中设置
                 }
             }
-            
-            // 删除并重新创建通道以确保设置生效
+
+            // 不再删除已存在的通道，直接创建或更新通道
             val notificationManager = getSystemService(NotificationManager::class.java)
-            notificationManager.deleteNotificationChannel(NOTIFICATION_CHANNEL_ID)
-            notificationManager.createNotificationChannel(channel)
+            try {
+                notificationManager.createNotificationChannel(channel)
+            } catch (e: Exception) {
+                Log.e(TAG, "创建通知渠道失败: ${e.message}")
+                // 如果创建失败，尝试获取已存在的通道
+                val existingChannel = notificationManager.getNotificationChannel(NOTIFICATION_CHANNEL_ID)
+                if (existingChannel == null) {
+                    Log.e(TAG, "无法获取或创建通知渠道")
+                }
+            }
         }
     }
 
+    private fun updateNotification() {
+        try {
+            val connectedCount = deviceStates.values.count { it.connectionStatus == ConnectionStatus.CONNECTED }
+            val totalCount = deviceStates.size
+
+            Log.d(TAG, "更新通知: 已连接 $connectedCount/$totalCount 个设备")
+
+            val notificationText = if (totalCount > 0) {
+                "已连接 $totalCount 个设备，正在监控安全带状态"
+            } else {
+                "正在后台保护您的作业安全"
+            }
+            val notificationIntent = Intent(this, MainActivityOperator::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("安全带卫士 - 后台监控中")
+                .setContentText(notificationText)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
+                .setContentIntent(pendingIntent)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setOngoing(true)
+                .setShowWhen(true)
+                .setWhen(System.currentTimeMillis())
+                .setOnlyAlertOnce(true)
+                .setStyle(NotificationCompat.BigTextStyle()
+                    .bigText(notificationText + "\n\n点击返回应用查看详细监控状态"))
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .build()
+            // 更新前台服务通知
+            startForeground(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "更新通知失败: ${e.message}")
+        }
+    }
     data class HeartbeatInfo(val sensorIdHex: String, val batteryStatus: String)
     data class ParsedSensorData(val sensorType: Int, val isAbnormal: Boolean)
-
     companion object {
         @Volatile
         var currentSessionId: String? = null
-
         const val ACTION_CONNECT_DEVICES = "com.heyu.safetybeltoperators.ACTION_CONNECT_DEVICES"
         const val ACTION_DISCONNECT_ALL = "com.heyu.safetybeltoperators.ACTION_DISCONNECT_ALL"
         const val ACTION_RETRY_CONNECTION = "com.heyu.safetybeltoperators.ACTION_RETRY_CONNECTION"
@@ -1223,24 +1154,20 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         const val EXTRA_SENSOR_ID = "com.heyu.safetybeltoperators.EXTRA_SENSOR_ID"
         const val EXTRA_BATTERY = "com.heyu.safetybeltoperators.EXTRA_BATTERY"
         const val EXTRA_ALARM_MESSAGES = "com.heyu.safetybeltoperators.EXTRA_ALARM_MESSAGES"
-
         private const val NOTIFICATION_CHANNEL_ID = "BleServiceChannel"
         private const val NOTIFICATION_ID = 1
         private const val TAG = "BleService"
-
         private const val CONNECTION_TIMEOUT_MS = 30000L
         private const val RECONNECT_DELAY_MS = 2000L
         private const val MAX_RECONNECT_ATTEMPTS = 3
         private const val SINGLE_HOOK_TIMEOUT_MS = 20000L
         private const val MUTE_DURATION_MS = 60000L
         private const val ALARM_UTTERANCE_ID = "com.heyu.safetybeltoperators.ALARM_CYCLE_UTTERANCE"
-
         val HEARTBEAT_SERVICE_UUID: UUID = UUID.fromString("00001233-0000-1000-8000-00805f9b34fb")
         val HEARTBEAT_CHARACTERISTIC_UUID: UUID = UUID.fromString("00001235-0000-1000-8000-00805f9b34fb")
         val SENSOR_DATA_SERVICE_UUID: UUID = UUID.fromString("00005677-0000-1000-8000-00805f9b34fb")
         val SENSOR_DATA_CHARACTERISTIC_UUID: UUID = UUID.fromString("00005679-0000-1000-8000-00805f9b34fb")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-
         val SENSOR_TYPE_NAMES = mapOf(
             1 to "后背绳高挂",
             2 to "后背绳小钩",
