@@ -1,4 +1,5 @@
 package com.heyu.safetybelt.operator.service
+
 import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
@@ -51,6 +52,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.collections.get
+
 @SuppressLint("MissingPermission")
 class BleService : Service(), TextToSpeech.OnInitListener {
     private enum class ConnectionStatus {
@@ -165,19 +167,7 @@ class BleService : Service(), TextToSpeech.OnInitListener {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
-        // 处理设备连接逻辑，确保设备状态正确更新
-        when (intent?.action) {
-            ACTION_CONNECT_DEVICES, ACTION_CONNECT_SPECIFIC -> {
-                val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
-                devices?.forEach {
-                    if (!deviceStates.containsKey(it.deviceAddress)) {
-                        deviceStates[it.deviceAddress] = DeviceState(it)
-                    }
-                }
-            }
-        }
-        // 更新通知内容，确保显示最新的连接状态
-        updateNotification()
+
         when (intent?.action) {
             ACTION_CONNECT_DEVICES -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
@@ -198,12 +188,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         connectWithTimeout(it.deviceAddress)
                     }
                 }
-                // 连接设备后更新通知
-                updateNotification()
             }
             ACTION_DISCONNECT_ALL -> {
                 disconnectAllDevices(true)
-                updateNotification()
             }
             ACTION_CONNECT_SPECIFIC -> {
                 val devices = intent.getParcelableArrayListExtra<DeviceScanResult>(EXTRA_DEVICES)
@@ -213,16 +200,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                         connectWithTimeout(it.deviceAddress)
                     }
                 }
-                // 连接特定设备后更新通知
-                updateNotification()
             }
             ACTION_DISCONNECT_SPECIFIC -> {
                 intent.getStringArrayListExtra(EXTRA_DEVICES_TO_DISCONNECT)?.forEach {
                     disconnectSpecificDevice(it, true)
                 }
                 evaluateOverallStatus()
-                // 断开设备后更新通知
-                updateNotification()
             }
             ACTION_REQUEST_ALL_STATUSES -> broadcastAllStatuses()
             ACTION_RETRY_CONNECTION -> {
@@ -230,8 +213,6 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 if (addr != null && deviceStates.containsKey(addr)) {
                     deviceStates[addr]?.reconnectAttempts = 0
                     connectWithTimeout(addr)
-                    // 重试连接后更新通知
-                    updateNotification()
                 }
             }
             ACTION_MUTE_ALARMS -> {
@@ -242,7 +223,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_RESET_ADMIN_ALERT -> resetAdminAlert()
         }
-        // 蹦蹦猪：改为 NOT_STICKY，划掉就不重启了
+
+        updateNotification()
         return START_NOT_STICKY
     }
     private fun broadcastAllStatuses() {
@@ -293,6 +275,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
         reconnectHandler.removeCallbacksAndMessages(null)
         compositeDisposable.clear()
         currentSessionId = null
+        // 确保所有蓝牙连接都被断开
+        deviceStates.values.forEach { state ->
+            state.gatt?.disconnect()
+            state.gatt?.close()
+        }
+        deviceStates.clear()
     }
     override fun onTaskRemoved(rootIntent: Intent?) {
         val sid = currentSessionId
@@ -305,6 +293,11 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             performEmergencyCloudSyncInTaskRemoved(sid)
         }
         cleanupConnectionsAndState(true)
+        // 确保所有蓝牙连接都被断开
+        deviceStates.values.forEach { state ->
+            state.gatt?.disconnect()
+            state.gatt?.close()
+        }
         super.onTaskRemoved(rootIntent)
         stopSelf()
     }
@@ -703,6 +696,9 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             } else {
                 handleDisconnection(address, "连接失败", "RED", false)
             }
+            mainHandler.post {
+                this@BleService.updateNotification()
+            }
         }
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val state = deviceStates[gatt.device.address] ?: return
@@ -1047,40 +1043,12 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 enableLights(true)
                 lightColor = android.graphics.Color.RED
                 enableVibration(false)
-                setShowBadge(true) // 允许显示徽章
+                setShowBadge(true)
                 setSound(null, null)
-
-                // 关键：确保锁屏显示 - 必须在创建通道前设置
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                }
-
-                // 允许绕过免打扰模式
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    setBypassDnd(true)
-                }
-
-                // 设置高优先级确保显示
-                importance = NotificationManager.IMPORTANCE_HIGH
-
-                // 确保在Android 13+上显示
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // 不需要重复设置importance，已在构造函数中设置
-                }
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
-
-            // 不再删除已存在的通道，直接创建或更新通道
             val notificationManager = getSystemService(NotificationManager::class.java)
-            try {
-                notificationManager.createNotificationChannel(channel)
-            } catch (e: Exception) {
-                Log.e(TAG, "创建通知渠道失败: ${e.message}")
-                // 如果创建失败，尝试获取已存在的通道
-                val existingChannel = notificationManager.getNotificationChannel(NOTIFICATION_CHANNEL_ID)
-                if (existingChannel == null) {
-                    Log.e(TAG, "无法获取或创建通知渠道")
-                }
-            }
+            notificationManager.createNotificationChannel(channel)
         }
     }
 
@@ -1089,10 +1057,8 @@ class BleService : Service(), TextToSpeech.OnInitListener {
             val connectedCount = deviceStates.values.count { it.connectionStatus == ConnectionStatus.CONNECTED }
             val totalCount = deviceStates.size
 
-            Log.d(TAG, "更新通知: 已连接 $connectedCount/$totalCount 个设备")
-
             val notificationText = if (totalCount > 0) {
-                "已连接 $totalCount 个设备，正在监控安全带状态"
+                "已连接 $connectedCount/$totalCount 个设备，正在监控安全带状态"
             } else {
                 "正在后台保护您的作业安全"
             }
@@ -1102,23 +1068,14 @@ class BleService : Service(), TextToSpeech.OnInitListener {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
             val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-                .setContentTitle("安全带卫士 - 后台监控中")
+                .setContentTitle("安全带卫士")
                 .setContentText(notificationText)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setLargeIcon(android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
                 .setContentIntent(pendingIntent)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setOngoing(true)
-                .setShowWhen(true)
-                .setWhen(System.currentTimeMillis())
-                .setOnlyAlertOnce(true)
-                .setStyle(NotificationCompat.BigTextStyle()
-                    .bigText(notificationText + "\n\n点击返回应用查看详细监控状态"))
-                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
                 .build()
-            // 更新前台服务通知
             startForeground(NOTIFICATION_ID, notification)
         } catch (e: Exception) {
             Log.e(TAG, "更新通知失败: ${e.message}")

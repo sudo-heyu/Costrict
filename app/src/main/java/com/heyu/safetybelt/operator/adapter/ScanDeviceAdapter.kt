@@ -21,7 +21,7 @@ class ScanDeviceAdapter(
         2 to "后背绳小挂钩",
         3 to "围杆带环抱",
         4 to "围杆带小挂钩",
-        5 to "胸扣",
+        5 to "腰扣",
         6 to "后背绳大挂钩"
     )
 

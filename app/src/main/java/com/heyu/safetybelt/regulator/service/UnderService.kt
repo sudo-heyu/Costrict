@@ -224,26 +224,26 @@ class UnderService : Service() {
                 enableVibration(false)
                 setShowBadge(true) // 允许显示徽章
                 setSound(null, null)
-                
+
                 // 关键：确保锁屏显示 - 必须在创建通道前设置
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
-                
+
                 // 允许绕过免打扰模式
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     setBypassDnd(true)
                 }
-                
+
                 // 设置高优先级确保显示
                 importance = NotificationManager.IMPORTANCE_HIGH
-                
+
                 // 确保在Android 13+上显示
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     // 不需要重复设置importance，已在构造函数中设置
                 }
             }
-            
+
             // 删除并重新创建通道以确保设置生效
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.deleteNotificationChannel(channelId)
@@ -284,7 +284,7 @@ class UnderService : Service() {
             // 确保在Android 15上显示
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
