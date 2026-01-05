@@ -15,8 +15,8 @@ class MainApplication : Application() {
     var currentWorkerObjectId: String? = null
     var currentUserType: String? = null // "worker" 或 "regulator"
     
-    // 保存当前Fragment状态，防止Activity重建时丢失监控界面
-    var isInMonitoringMode: Boolean = false
+
+    var isInMonitoringMode: Boolean = false// 保存当前Fragment状态，防止Activity重建时丢失监控界面
 
     companion object {
         private var instance: MainApplication? = null

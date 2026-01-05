@@ -34,7 +34,7 @@ class MonitoringFragment : Fragment(), UnderService.WorkerListListener {
 
     private var _binding: FragmentMonitoringBinding? = null
     private val binding get() = _binding!!
-
+//2222
     private lateinit var adapter: WorkerStatusAdapter
     private var underService: UnderService? = null
     private var isServiceBound = false

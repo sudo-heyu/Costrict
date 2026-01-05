@@ -33,7 +33,7 @@ import com.heyu.safetybelt.operator.service.BleService
 class MainActivityOperator : AppCompatActivity() {
     private lateinit var bottomNavigation: BottomNavigationView
     private val tag = "MainActivity"
-
+//1111
     private var workerName: String? = null
     private var employeeId: String? = null
     internal var workerObjectId: String? = null

@@ -8,6 +8,8 @@ import java.util.Date
 @LCClassName("AlarmEvent")
 class AlarmEvent : LCObject() {
 
+
+    //111111111111
     // 关联到 _User 表
     var worker: LCUser?
         get() = getLCObject("worker") as? LCUser
