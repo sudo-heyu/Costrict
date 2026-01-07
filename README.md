@@ -1,5 +1,88 @@
 # SafetyBelt 智能安全带监测系统
 
+> **致评委：如果您需要快速验证系统功能，请直接阅读下方的“🚀 快速测试指南 (APK)”，无需配置复杂的开发环境。**
+
+---
+
+## 🚀 快速测试指南 (APK)
+
+为了方便评委进行快速评审，我们在项目根目录下预置了已编译好的 APK 安装包。
+
+- **APK 文件路径**：`./safetybelt-v1.0-debug.apk` (位于项目根目录)
+- **安装步骤**：
+    1. 将 `safetybelt-v1.0-debug.apk` 拷贝至您的 Android 真机。
+    2. 在手机文件管理器中点击该文件。
+    3. 若系统提示“禁止安装未知来源应用”，请前往设置授予权限后继续安装。
+    4. 安装完成后，启动应用。
+- **权限授予**：
+    - **初次启动**：请务必授予应用所需的 **蓝牙 (Nearby Devices)、位置信息（BLE扫描必需）、震动、通知** 等权限。
+    - **Android 12+**：请在系统弹出提示时允许“寻找、连接并确定近旁设备的位置”。
+- **测试准备**：
+    - **硬件依赖**：本软件需要配套本团队研发的 **Ble 传感器** 一起使用。
+    - **命名规范**：请确保待连接的传感器蓝牙名称符合 **`SensorA_xxxx`** 格式（例如：`SensorA_1234`）。系统会自动过滤非本项目协议的设备。
+    - **工人端测试**：选择“工人端” -> 登录 -> 点击“开始扫描” -> 点击匹配的 `SensorA_xxxx` 设备进行连接。连接成功后即可查看实时拉力数据及报警逻辑。
+    - **监管端测试**：选择“监管员端” -> 登录 -> 点击右上角“+”号添加正在作业的工人工号，实现远程状态看板监控。
+
+---
+
+## 🛠️ 项目基础信息
+
+### 1. 项目名称
+**SafetyBelt 智能安全带监测系统** (SafetyBelt Intelligent Monitoring System)
+*该项目旨在通过 BLE 蓝牙通信技术与云端实时同步技术，解决高空作业人员安全带佩戴状态的实时监控与预警问题。*
+
+### 2. 运行环境 (Environment)
+*   **物理硬件 (Must-have)**:
+    *   **Android 真机**: 由于 Android 模拟器（如 AVD, Genymotion）无法完整模拟低功耗蓝牙 (BLE) 扫描及连接行为，**必须使用支持蓝牙 4.0+ 的 Android 物理手机**进行测试。
+    *   **专用传感器**: 需配合本团队定制的 BLE 传感器硬件。**识别规则**: 设备名称必须以 `SensorA_` 开头（格式：`SensorA_1234`）。
+*   **软件版本 (Software)**:
+    *   **操作系统**: Android 7.0 (Nougat, API 24) 及以上。推荐 Android 10.0+。
+    *   **构建环境**: 
+        *   Android Studio Hedgehog (2023.1.1) 或以上版本。
+        *   JDK 17 (项目已集成 Java 17 语言特性支持)。
+        *   Gradle 8.12.2 (对应 Gradle Wrapper 已包含在项目中)。
+
+### 3. 依赖库及安装命令 (Dependencies)
+项目采用 Gradle 集中化依赖管理，只需确保网络畅通，IDE 会自动下载并配置。
+*   **云端存储与实时同步**: 
+    *   `cn.leancloud:storage-android:8.2.28` (核心存储)
+    *   `cn.leancloud:realtime-android:8.2.28` (LiveQuery 实时监控)
+*   **反应式编程与异步流**: 
+    *   `io.reactivex.rxjava3:rxjava:3.1.8`
+    *   `io.reactivex.rxjava3:rxandroid:3.0.2`
+*   **UI 交互与架构**:
+    *   `com.google.android.material:material:1.12.0` (Material 3)
+    *   `androidx.navigation:navigation-fragment-ktx:2.7.7`
+*   **安装命令**:
+    在项目根目录下，您可以通过终端执行以下命令进行依赖同步与构建：
+    ```bash
+    # 同步依赖并编译 Debug 版本
+    ./gradlew assembleDebug
+    ```
+
+### 4. 详细运行步骤 (Step-by-Step Guide)
+**第一步：源码导入**
+1. 启动 Android Studio。
+2. 选择 `File -> Open...`，定位到 `D:/Project_SourceCode` 文件夹并打开。
+3. 建议项目路径不要包含中文字符，以防 Gradle 构建过程中出现乱码导致失败。
+
+**第二步：项目配置与同步**
+1. 等待 IDE 下方的 `Gradle Sync` 进度条完成。
+2. **网络优化**：若因网络原因导致依赖下载失败（如 LeanCloud 库），请在 `settings.gradle` 中添加阿里云或华为云镜像，或者开启全局科学上网。
+3. 检查控制台输出，确保出现 `BUILD SUCCESSFUL` 字样。
+
+**第三步：真机调试设置**
+1. 在 Android 手机上进入 `设置 -> 关于手机`，连续点击 `版本号` 7 次开启开发者选项。
+2. 进入 `设置 -> 系统 -> 开发者选项`，开启 **USB 调试**。
+3. 使用 USB 数据线连接电脑。在 Android Studio 顶部的设备下拉列表中选中您的手机。
+
+**第四步：编译、运行与授权**
+1. 点击工具栏的绿色三角形 **`Run 'app'`** 按钮。
+2. 应用启动后，系统会先后请求 **定位权限** 和 **蓝牙扫描/连接权限**。
+3. **关键操作**：请务必点击 **“允许”**，否则搜索不到任何 `SensorA_xxxx` 传感器。
+
+---
+
 ## 📋 项目简介
 
 **SafetyBelt**是一款专为工业安全设计的移动端智能监测系统。该系统通过蓝牙低功耗（BLE）技术连接安全带传感器，实时采集工人的作业状态，并利用 LeanCloud 云端同步技术实现远程监管。系统分为**操作端（Operator）**和**监管端（Regulator）**，确保安全生产数据实时可查、异常即时报警。
@@ -317,10 +400,10 @@ cd SafetyBelt
 
 2. **打开项目**：使用 Android Studio 打开项目
 
-3. **配置 LeanCloud**：根据需要修改 [`MainApplication.kt`](application/MainApplication.kt:25-30) 中的配置
+3. **配置 LeanCloud**：根据需要 modify [`MainApplication.kt`](application/MainApplication.kt:25-30) 中的配置
 
 4. **运行项目**：
-   - 连接 Android 设备或启动模拟器
+   - 连接 Android 设备 host 启动模拟器
    - 点击 Run 按钮（或 Shift + F10）
 
 5. **生成 APK**：
@@ -441,4 +524,3 @@ cd SafetyBelt
 如有问题或建议，欢迎提交 Issue 或 Pull Request。
 
 ---
-
